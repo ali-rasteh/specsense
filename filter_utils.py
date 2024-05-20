@@ -14,7 +14,7 @@ def upsample(signal, up=2):
         np.array: Upsampled signal with zeros inserted.
     """
     upsampled_length = up * len(signal)
-    upsampled_signal = np.zeros(upsampled_length).astype(complex)
+    upsampled_signal = np.zeros(upsampled_length, dtype=complex)
 
     # Assign the original signal values to the even indices
     upsampled_signal[::up] = signal.copy()
@@ -23,9 +23,9 @@ def upsample(signal, up=2):
 
 def cross_correlation(sig_1, sig_2, index):
     if index >= 0:
-        padded_sig_2 = np.concatenate((np.zeros(index).astype(complex), sig_2[:len(sig_2) - index]))
+        padded_sig_2 = np.concatenate((np.zeros(index, dtype=complex), sig_2[:len(sig_2) - index]))
     else:
-        padded_sig_2 = np.concatenate((sig_2[-index:], np.zeros(-index).astype(complex)))
+        padded_sig_2 = np.concatenate((sig_2[-index:], np.zeros(-index, dtype=complex)))
 
     cros_corr = np.mean(sig_1 * np.conj(padded_sig_2))
     return cros_corr
@@ -93,6 +93,7 @@ def extract_delay(sig_1, sig_2, plot_corr=False):
         delay (int): The delay of signal 1 with respect to signal 2 in samples.
     """
     cross_corr = np.correlate(sig_1, sig_2, mode='full')
+    # cross_corr = np.correlate(sig_1, sig_2, mode='same')
     lags = np.arange(-len(sig_2) + 1, len(sig_1))
 
     if plot_corr:
@@ -169,56 +170,56 @@ def basis_fir_us(input, fil_base, t, freq, center_freq, iters, us_rate, plot_pro
     if iters == 0:
         # output = np.convolve(input, fil_base_shifted, mode='same')
         output = lfilter(fil_base_shifted, 1, input)
-        return output, grp_dly
+    else:
+        temp = fil_base.copy()
+        for i in range(iters):
+            # fil_us[i] = upfirdn([1], temp, up=us_rate)
+            fil_us[i] = upsample(temp, up=us_rate)
+            temp = fil_us[i]
+        for i in range(iters):
+            fil_us[i] = np.exp(2 * np.pi * 1j * center_freq * t[:len(fil_us[i])]) * fil_us[i]
 
-    temp = fil_base.copy()
-    for i in range(iters):
-        # fil_us[i] = upfirdn([1], temp, up=us_rate)
-        fil_us[i] = upsample(temp, up=us_rate)
-        temp = fil_us[i]
-    for i in range(iters):
-        fil_us[i] = np.exp(2 * np.pi * 1j * center_freq * t[:len(fil_us[i])]) * fil_us[i]
+        temp = input.copy()
+        for i in range(iters):
+            # sig_fil_us[i] = np.convolve(temp, fil_us[iters - i - 1], mode='same')
+            sig_fil_us[i] = lfilter(fil_us[iters - i - 1], 1, temp)
+            temp = sig_fil_us[i]
+        # output = np.convolve(temp, fil_base_shifted, mode='same')
+        output = lfilter(fil_base_shifted, 1, temp)
 
-    temp = input.copy()
-    for i in range(iters):
-        # sig_fil_us[i] = np.convolve(temp, fil_us[iters - i - 1], mode='same')
-        sig_fil_us[i] = lfilter(fil_us[iters - i - 1], 1, temp)
-        temp = sig_fil_us[i]
-    # output = np.convolve(temp, fil_base_shifted, mode='same')
-    output = lfilter(fil_base_shifted, 1, temp)
+        if plot_procedure:
+            # Plotting the filter response and signal spectrums
+            plt.figure()
+            w, h = freqz(fil_base_shifted, worN=om)
+            plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Base Filter')
+            w, h = freqz(fil_us[0], worN=om)
+            plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Upsampled Filter')
+            plt.title('Base and Upsampled Filters Frequency Response')
+            plt.xlabel('Normalized Frequency (xpi rad/sample)')
+            plt.ylabel('Magnitude (dB)')
+            plt.legend()
+            plt.show()
 
-    if plot_procedure:
-        # Plotting the filter response and signal spectrums
-        plt.figure()
-        w, h = freqz(fil_base_shifted, worN=om)
-        plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Base Filter')
-        w, h = freqz(fil_us[0], worN=om)
-        plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Upsampled Filter')
-        plt.title('Base and Upsampled Filters Frequency Response')
-        plt.xlabel('Normalized Frequency (xpi rad/sample)')
-        plt.ylabel('Magnitude (dB)')
-        plt.legend()
-        plt.show()
+            plt.figure()
+            plot_indices = [0,min(1,iters-1),iters-1]
+            # for idx, signal in enumerate(sig_fil_us, start=1):
+            for i, idx in enumerate(plot_indices):
+                plt.subplot(len(plot_indices) + 1, 1, i+1)
+                spectrum = np.fft.fftshift(np.fft.fft(sig_fil_us[idx]))
+                plt.plot(freq, 20 * np.log10(np.abs(spectrum)), linewidth=1.0)
+                plt.title(f'Frequency Spectrum of the {idx} round filtered signal')
+                plt.xlabel('Frequency (Hz)')
+                plt.ylabel('Magnitude (dB)')
 
-        plt.figure()
-        plot_indices = [0,min(1,iters-1),iters-1]
-        # for idx, signal in enumerate(sig_fil_us, start=1):
-        for i, idx in enumerate(plot_indices):
-            plt.subplot(len(plot_indices) + 1, 1, i+1)
-            spectrum = np.fft.fftshift(np.fft.fft(sig_fil_us[idx]))
+            plt.subplot(len(plot_indices)+1, 1, len(plot_indices)+1)
+            spectrum = np.fft.fftshift(np.fft.fft(output))
             plt.plot(freq, 20 * np.log10(np.abs(spectrum)), linewidth=1.0)
-            plt.title(f'Frequency Spectrum of the {idx} round filtered signal')
+            plt.title('Frequency Spectrum of the output signal')
             plt.xlabel('Frequency (Hz)')
             plt.ylabel('Magnitude (dB)')
+            plt.show()
 
-        plt.subplot(len(plot_indices)+1, 1, len(plot_indices)+1)
-        spectrum = np.fft.fftshift(np.fft.fft(output))
-        plt.plot(freq, 20 * np.log10(np.abs(spectrum)), linewidth=1.0)
-        plt.title('Frequency Spectrum of the output signal')
-        plt.xlabel('Frequency (Hz)')
-        plt.ylabel('Magnitude (dB)')
-        plt.show()
-
+    # output = np.array(output)
     return output, grp_dly
 
 
@@ -255,80 +256,79 @@ def basis_fir_ds_us(input, fil_base, t, freq, center_freq, iters, ds_rate, us_ra
     if iters == 0:
         # output = np.convolve(input, fil_base_shifted, mode='same')
         output = lfilter(fil_base_shifted, 1, input)
-        return output, grp_dly
+    else:
+        temp = input_centered.copy()
+        for i in range(iters):
+            # sig_ds_fil[i] = np.convolve(temp, fil_base, mode='same')
+            sig_ds_fil[i] = lfilter(fil_base, 1, temp)
+            sig_ds[i] = sig_ds_fil[i][::ds_rate]
+            temp = sig_ds[i]
 
-    temp = input_centered.copy()
-    for i in range(iters):
-        # sig_ds_fil[i] = np.convolve(temp, fil_base, mode='same')
-        sig_ds_fil[i] = lfilter(fil_base, 1, temp)
-        sig_ds[i] = sig_ds_fil[i][::ds_rate]
-        temp = sig_ds[i]
+        # temp = np.convolve(temp, fil_base, mode='same')
+        temp = lfilter(fil_base, 1, temp)
+        for i in range(iters):
+            # sig_us[i] = upfirdn([1], temp, up=us_rate)
+            sig_us[i] = upsample(temp, up=us_rate)
+            # sig_us_fil[i] = np.convolve(sig_us[i], fil_base, mode='same')
+            sig_us_fil[i] = lfilter(fil_base, 1, sig_us[i])
+            temp = sig_us_fil[i]
 
-    # temp = np.convolve(temp, fil_base, mode='same')
-    temp = lfilter(fil_base, 1, temp)
-    for i in range(iters):
-        # sig_us[i] = upfirdn([1], temp, up=us_rate)
-        sig_us[i] = upsample(temp, up=us_rate)
-        # sig_us_fil[i] = np.convolve(sig_us[i], fil_base, mode='same')
-        sig_us_fil[i] = lfilter(fil_base, 1, sig_us[i])
-        temp = sig_us_fil[i]
+        output = sig_us_fil[iters - 1] * (2 ** iters)
+        output = np.exp(2 * np.pi * 1j * center_freq * t) * output
 
-    output = sig_us_fil[iters - 1] * (2 ** iters)
-    output = np.exp(2 * np.pi * 1j * center_freq * t) * output
+        if plot_procedure:
+            # Plotting the filter response and signal spectrums
+            plt.figure()
+            for idx in range(4):
+                plt.subplot(4, 1, idx + 1)
+                if idx == 0:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_ds_fil[0]))
+                    index = 0
+                    plt.title('Frequency spectrum of the first round filtered signal')
+                elif idx == 1:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_ds[0]))
+                    index = 1
+                    plt.title('Frequency spectrum of the first round downsampled filtered signal')
+                elif idx == 2:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_ds_fil[iters - 1]))
+                    index = iters-1
+                    plt.title('Frequency spectrum of the last round filtered signal')
+                elif idx == 3:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_ds[iters - 1]))
+                    index = iters
+                    plt.title('Frequency spectrum of the last round downsampled filtered signal')
+                spectrum = 20 * np.log10(np.abs(spectrum))
+                freq_ds = freq[::ds_rate**index]
+                plt.plot(freq_ds, spectrum, 'r-', linewidth=1.0)
+                plt.xlabel('Frequency (Hz)')
+                plt.ylabel('Magnitude (dB)')
 
-    if plot_procedure:
-        # Plotting the filter response and signal spectrums
-        plt.figure()
-        for idx in range(4):
-            plt.subplot(4, 1, idx + 1)
-            if idx == 0:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_ds_fil[0]))
-                index = 0
-                plt.title('Frequency spectrum of the first round filtered signal')
-            elif idx == 1:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_ds[0]))
-                index = 1
-                plt.title('Frequency spectrum of the first round downsampled filtered signal')
-            elif idx == 2:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_ds_fil[iters - 1]))
-                index = iters-1
-                plt.title('Frequency spectrum of the last round filtered signal')
-            elif idx == 3:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_ds[iters - 1]))
-                index = iters
-                plt.title('Frequency spectrum of the last round downsampled filtered signal')
-            spectrum = 20 * np.log10(np.abs(spectrum))
-            freq_ds = freq[::ds_rate**index]
-            plt.plot(freq_ds, spectrum, 'r-', linewidth=1.0)
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('Magnitude (dB)')
+            plt.figure()
+            for idx in range(4):
+                plt.subplot(4, 1, idx + 1)
+                if idx == 0:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_us[0]))
+                    index = 1
+                    plt.title('Frequency spectrum of the first round upsampled signal')
+                elif idx == 1:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_us_fil[0]))
+                    index = 1
+                    plt.title('Frequency spectrum of the first round filtered upsampled signal')
+                elif idx == 2:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_us[iters - 1]))
+                    index = iters
+                    plt.title('Frequency spectrum of the last round upsampled signal')
+                elif idx == 3:
+                    spectrum = np.fft.fftshift(np.fft.fft(sig_us_fil[iters - 1]))
+                    index = iters
+                    plt.title('Frequency spectrum of the last round filtered upsampled signal')
+                spectrum = 20 * np.log10(np.abs(spectrum))
+                freq_us = freq[::us_rate ** (iters - index)]
+                plt.plot(freq_us, spectrum, 'r-', linewidth=1.0)
+                plt.xlabel('Frequency (Hz)')
+                plt.ylabel('Magnitude (dB)')
 
-        plt.figure()
-        for idx in range(4):
-            plt.subplot(4, 1, idx + 1)
-            if idx == 0:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_us[0]))
-                index = 1
-                plt.title('Frequency spectrum of the first round upsampled signal')
-            elif idx == 1:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_us_fil[0]))
-                index = 1
-                plt.title('Frequency spectrum of the first round filtered upsampled signal')
-            elif idx == 2:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_us[iters - 1]))
-                index = iters
-                plt.title('Frequency spectrum of the last round upsampled signal')
-            elif idx == 3:
-                spectrum = np.fft.fftshift(np.fft.fft(sig_us_fil[iters - 1]))
-                index = iters
-                plt.title('Frequency spectrum of the last round filtered upsampled signal')
-            spectrum = 20 * np.log10(np.abs(spectrum))
-            freq_us = freq[::us_rate ** (iters - index)]
-            plt.plot(freq_us, spectrum, 'r-', linewidth=1.0)
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('Magnitude (dB)')
-
-        plt.show()
+            plt.show()
 
     return output, grp_dly
 
@@ -337,6 +337,7 @@ def basis_fir_ds_us(input, fil_base, t, freq, center_freq, iters, ds_rate, us_ra
 
 if __name__ == '__main__':
     pass
+
     # sig_1 = np.random.rand(100)
     # sig_1 = np.array([1,2,3,4,5])
     # extract_delay(sig_1,sig_1,True)
