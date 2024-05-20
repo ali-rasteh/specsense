@@ -1,3 +1,4 @@
-./desktop.ini
-./.idea
-./__pycache__
+/desktop.ini
+/.idea
+/__pycache__
+/test.py
