@@ -12,24 +12,24 @@ if __name__ == '__main__':
 
     # Constants
     fs = 200e6  # Sampling frequency
-    n_points = 2 ** 13
-    t = np.arange(0, n_points) / fs  # Time vector
+    n_samples = 2 ** 13
+    t = np.arange(0, n_samples) / fs  # Time vector
 
-    fil_sharp_bw = 10e6
-    fil_base_order_pos = 64
-    fil_base_order_neg = 0
-    iters = 1
-    fil_sharp_order_pos = fil_base_order_pos * (2 ** iters)
-    fil_wiener_order_pos = fil_base_order_pos * (2 ** iters)
-    fil_wiener_order_neg = 0
+    sharp_bw = 10e6
+    base_order_pos = 64
+    base_order_neg = 0
+    n_stage = 1
+    sharp_order_pos = base_order_pos * (2 ** n_stage)
+    wiener_order_pos = base_order_pos * (2 ** n_stage)
+    wiener_order_neg = 0
     us_rate = 2
     ds_rate = 2
 
     fil_bank_mode = 1  # 1 for whole-span coverage and 2 for TX signal coverage
-    filtering_mode = 1  # 1: use sharp filter bank, 2: use fir_us filters, 3: use fir_ds_us filters
-    random_params = True
+    fil_mode = 1  # 1: use sharp filter bank, 2: use fir_us filters, 3: use fir_ds_us filters
+    rand_params = True
 
-    if random_params:
+    if rand_params:
         N_sig = 8
         N_r = 8
         # N_sig = 2
@@ -72,32 +72,31 @@ if __name__ == '__main__':
     sig_amp = sig_amp.astype(complex)
     spatial_sig = spatial_sig.astype(complex)
 
-    nfft = 2 ** np.ceil(np.log2(n_points)).astype(int)
+    nfft = 2 ** np.ceil(np.log2(n_samples)).astype(int)
     snr = 10
     ridge_coeff = 1
 
-    grp_dly_base = (fil_base_order_pos // 2)
-    grp_dly_sharp = (fil_sharp_order_pos // 2)
+    grp_dly_base = (base_order_pos // 2)
+    grp_dly_sharp = (sharp_order_pos // 2)
 
     wiener_errs = np.zeros(N_sig)
     basis_errs = np.zeros(N_sig)
 
-    # print(sig_amp, spatial_sig)
     #=================================================
-    om = np.linspace(-np.pi, np.pi, n_points)
-    freq = ((np.arange(1, n_points + 1) / n_points) - 0.5) * fs
+    om = np.linspace(-np.pi, np.pi, n_samples)
+    freq = ((np.arange(1, n_samples + 1) / n_samples) - 0.5) * fs
     #=================================================
-    noise = randn(n_points).astype(complex)
-    rx = np.zeros((N_r, n_points), dtype=complex)
-    signals = np.zeros((N_sig, n_points), dtype=complex)
+    noise = randn(n_samples).astype(complex)
+    rx = np.zeros((N_r, n_samples), dtype=complex)
+    sigs = np.zeros((N_sig, n_samples), dtype=complex)
     sig_sel_id = 0
     rx_sel_id = 0
 
     for i in range(N_sig):
         fil_sig = firwin(1001, sig_bw[i] / fs)
-        # signals[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * t) * sig_amp[i] * np.convolve(noise, fil_sig, mode='same')
-        signals[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * t) * sig_amp[i] * lfilter(fil_sig, 1, noise)
-        rx += np.outer(spatial_sig[:, i], signals[i, :])
+        # sigs[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * t) * sig_amp[i] * np.convolve(noise, fil_sig, mode='same')
+        sigs[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * t) * sig_amp[i] * lfilter(fil_sig, 1, noise)
+        rx += np.outer(spatial_sig[:, i], sigs[i, :])
 
     yvar = np.mean(np.abs(rx) ** 2, axis=1)
     wvar = yvar * (10 ** (-snr / 10))
@@ -107,7 +106,7 @@ if __name__ == '__main__':
     plt.figure()
     plt.subplot(3, 1, 1)
     for i in range(N_sig):
-        spectrum = fftshift(fft(signals[i, :]))
+        spectrum = fftshift(fft(sigs[i, :]))
         spectrum = 20 * np.log10(np.abs(spectrum))
         plt.plot(freq, spectrum, color=np.random.rand(3), linewidth=0.5)
     plt.title('Frequency spectrum of initial wideband signals')
@@ -118,12 +117,12 @@ if __name__ == '__main__':
     spectrum = fftshift(fft(rx[rx_sel_id, :]))
     spectrum = 20 * np.log10(np.abs(spectrum))
     plt.plot(freq, spectrum, 'b-', linewidth=0.5)
-    plt.title('Frequency spectrum of one of the rx signals')
+    plt.title('Frequency spectrum of one of the rx sigs')
     plt.xlabel('Frequency (Hz)')
     plt.ylabel('Magnitude (dB)')
 
     plt.subplot(3, 1, 3)
-    spectrum = fftshift(fft(signals[sig_sel_id, :]))
+    spectrum = fftshift(fft(sigs[sig_sel_id, :]))
     spectrum = 20 * np.log10(np.abs(spectrum))
     plt.plot(freq, spectrum, 'r-', linewidth=0.5)
     plt.title('Frequency spectrum of a selected wideband signal')
@@ -133,15 +132,15 @@ if __name__ == '__main__':
     plt.show()
     # =================================================
     # sig_bw = 10e6
-    # iters = 3
+    # n_stage = 3
     # filter_order = 32
     # fil_sig = firwin(1001, sig_bw / fs)
     # sig_test_1 = lfilter(fil_sig, 1, noise)
-    # fil_base = firwin(filter_order + 1, sig_bw*1.5 * (2 ** iters) / fs)
-    # fil_sharp = firwin(filter_order*(2 ** iters)+1, sig_bw*1.5 / fs)
+    # fil_base = firwin(filter_order + 1, sig_bw*1.5 * (2 ** n_stage) / fs)
+    # fil_sharp = firwin(filter_order*(2 ** n_stage)+1, sig_bw*1.5 / fs)
     # sig_test_2 = lfilter(fil_sharp, 1, sig_test_1)
-    # # sig_test_2, delay = basis_fir_us(input=sig_test_1, fil_base=fil_base, t=t, freq=freq, center_freq=0, iters=iters, us_rate=2, plot_procedure=True)
-    # # sig_test_2, delay = basis_fir_ds_us(input=sig_test_1, fil_base=fil_base, t=t, freq=freq, center_freq=0, iters=iters, ds_rate=2, us_rate=2, plot_procedure=True)
+    # # sig_test_2, delay = basis_fir_us(input=sig_test_1, fil_base=fil_base, t=t, freq=freq, center_freq=0, n_stage=n_stage, us_rate=2, plot_procedure=True)
+    # # sig_test_2, delay = basis_fir_ds_us(input=sig_test_1, fil_base=fil_base, t=t, freq=freq, center_freq=0, n_stage=n_stage, ds_rate=2, us_rate=2, plot_procedure=True)
     # time_delay = extract_delay(sig_test_2, sig_test_1, True)
     # print(f'Time delay between the signal and its test filtered version for: {time_delay} samples')
     # sig_test_adj, signal_adj, mse, err2sig_ratio = time_adjust(sig_test_2, sig_test_1, time_delay)
@@ -150,28 +149,28 @@ if __name__ == '__main__':
     # =================================================
     # Filter bank creation
     if fil_bank_mode == 1:
-        fil_bank_num = int(fs / fil_sharp_bw)
-        center_freq = (-fs / 2) + (fil_sharp_bw / 2) + np.linspace(0, fil_bank_num - 1, fil_bank_num) * fil_sharp_bw
+        fil_bank_num = int(fs / sharp_bw)
+        fil_cf = (-fs / 2) + (sharp_bw / 2) + np.linspace(0, fil_bank_num - 1, fil_bank_num) * sharp_bw
     elif fil_bank_mode == 2:
         fil_bank_num = N_sig
-        center_freq = sig_cf.copy()
+        fil_cf = sig_cf.copy()
 
     fil_base = [None] * fil_bank_num
     fil_sharp = [None] * fil_bank_num
 
     for i in range(fil_bank_num):
         if fil_bank_mode == 1:
-            fil_bw_base = fil_sharp_bw
+            fil_bw_base = sharp_bw
         elif fil_bank_mode == 2:
             fil_bw_base = sig_bw[i]
-        fil_base[i] = firwin(fil_base_order_pos + 1, fil_bw_base * (2 ** iters) / fs)
-        fil_sharp[i] = firwin(fil_sharp_order_pos + 1, fil_bw_base / fs)
+        fil_base[i] = firwin(base_order_pos + 1, fil_bw_base * (2 ** n_stage) / fs)
+        fil_sharp[i] = firwin(sharp_order_pos + 1, fil_bw_base / fs)
 
     fil_bank = [None] * fil_bank_num
     plt.figure()
     for i in range(fil_bank_num):
         t_fil = t[:len(fil_sharp[i])]
-        fil_bank[i] = np.exp(2 * np.pi * 1j * center_freq[i] * t_fil) * fil_sharp[i]
+        fil_bank[i] = np.exp(2 * np.pi * 1j * fil_cf[i] * t_fil) * fil_sharp[i]
         if i % 1 == 0:
             w, h = freqz(fil_bank[i], worN=om)
             plt.plot(w / np.pi, 20 * np.log10(np.abs(h)), label=f'Filter {i + 1}')
@@ -187,17 +186,17 @@ if __name__ == '__main__':
     for i in range(fil_bank_num):
         for j in range(N_r):
             plot_procedure = (i == int(3 * fil_bank_num / 4) and j == rx_sel_id)
-            if filtering_mode==1:
+            if fil_mode==1:
                 # sig_bank[i][j] = np.convolve(rx[j, :], fil_bank[i], mode='same')
                 sig_bank[i][j] = lfilter(fil_bank[i], 1, rx[j, :])
                 filter_delay = grp_dly_sharp
-            elif filtering_mode==2:
-                sig_bank[i][j], filter_delay = basis_fir_us(rx[j, :], fil_base[i], t, freq, center_freq[i], iters, us_rate, plot_procedure)
-            elif filtering_mode == 3:
-                sig_bank[i][j], filter_delay = basis_fir_ds_us(rx[j, :], fil_base[i], t, freq, center_freq[i], iters,
+            elif fil_mode==2:
+                sig_bank[i][j], filter_delay = basis_fir_us(rx[j, :], fil_base[i], t, freq, fil_cf[i], n_stage, us_rate, plot_procedure)
+            elif fil_mode == 3:
+                sig_bank[i][j], filter_delay = basis_fir_ds_us(rx[j, :], fil_base[i], t, freq, fil_cf[i], n_stage,
                                                                ds_rate, us_rate, plot_procedure)
             else:
-                raise ValueError('Invalid Filtering mode %d' % filtering_mode)
+                raise ValueError('Invalid Filtering mode %d' % fil_mode)
 
             # suspicious
             sig_bank[i][j] = sig_bank[i][j].astype(complex)
@@ -222,9 +221,9 @@ if __name__ == '__main__':
     if N_r <= 1:
         for i in range(N_sig):
             for j in range(N_r):
-                fil_wiener_single[i][j] = wiener_fir(rx, signals[i, :].reshape((1,-1)), fil_wiener_order_pos, fil_wiener_order_neg).reshape(-1)
+                fil_wiener_single[i][j] = wiener_fir(rx, sigs[i, :].reshape((1,-1)), wiener_order_pos, wiener_order_neg).reshape(-1)
     else:
-        fil_wiener = wiener_fir_vector(rx, signals, fil_wiener_order_pos, fil_wiener_order_neg)
+        fil_wiener = wiener_fir_vector(rx, sigs, wiener_order_pos, wiener_order_neg)
         for i in range(N_sig):
             for j in range(N_r):
                 fil_wiener_single[i][j] = fil_wiener[i, j::N_r]
@@ -235,10 +234,10 @@ if __name__ == '__main__':
             # sig_filtered_wiener += np.convolve(rx_dly[j, :], fil_wiener_single[i][j], mode='same')
             sig_filtered_wiener += lfilter(fil_wiener_single[i][j], 1, rx_dly[j, :])
 
-        time_delay = extract_delay(sig_filtered_wiener, signals[i, :], False)
+        time_delay = extract_delay(sig_filtered_wiener, sigs[i, :], False)
         print(f'Time delay between the signal and its Wiener filtered version for {i + 1}: {time_delay} samples')
 
-        sig_filtered_wiener_adj, signal_adj, mse, err2sig_ratio = time_adjust(sig_filtered_wiener, signals[i, :],
+        sig_filtered_wiener_adj, signal_adj, mse, err2sig_ratio = time_adjust(sig_filtered_wiener, sigs[i, :],
                                                                               time_delay)
         print(
             f'Error to signal ratio for the estimation of the main signal using Wiener filter for {i + 1}: {err2sig_ratio}')
@@ -246,7 +245,7 @@ if __name__ == '__main__':
 
         if i == sig_sel_id:
             plt.figure()
-            index = range(n_points // 2,n_points // 2+500)
+            index = range(n_samples // 2,n_samples // 2+500)
             plt.plot(t[index], np.abs(signal_adj[index]), 'r-', linewidth=0.5)
             plt.plot(t[index], np.abs(sig_filtered_wiener_adj[index]), 'b-', linewidth=0.5)
             plt.title('Signal and its recovered wiener filtered in time domain')
@@ -264,11 +263,11 @@ if __name__ == '__main__':
     # =================================================
     # Basis filtering
     shift = filter_delay
-    sig_bank_mat = np.zeros((n_points - shift, fil_bank_num * N_r), dtype=complex)
+    sig_bank_mat = np.zeros((n_samples - shift, fil_bank_num * N_r), dtype=complex)
     for j in range(N_r):
         for i in range(fil_bank_num):
             sig_bank_mat[:, (j * fil_bank_num + i)] = sig_bank[i][j][shift:]
-    b = np.copy(signals[:, :n_points -shift].T)
+    b = np.copy(sigs[:, :n_samples -shift].T)
 
     for i in range(N_sig):
         # # sig_bank_coeffs = np.linalg.lstsq(sig_bank_mat.T @ sig_bank_mat + ridge_coeff * np.eye(fil_bank_num * N_r), sig_bank_mat.T @ b[:,i],
@@ -281,8 +280,8 @@ if __name__ == '__main__':
         sig_bank_mat_combined = np.hstack([sig_bank_mat_real, sig_bank_mat_imag])
         b_real = np.real(b[:,i])
         b_imag = np.imag(b[:,i])
-        ridge_real = Ridge(alpha=1.0)
-        ridge_imag = Ridge(alpha=1.0)
+        ridge_real = Ridge(alpha=ridge_coeff)
+        ridge_imag = Ridge(alpha=ridge_coeff)
         ridge_real.fit(sig_bank_mat_combined, b_real)
         ridge_imag.fit(sig_bank_mat_combined, b_imag)
 
@@ -309,20 +308,20 @@ if __name__ == '__main__':
 
 
 
-        time_delay = extract_delay(sig_filtered_base, signals[i, :n_points-shift], False)
+        time_delay = extract_delay(sig_filtered_base, sigs[i, :n_samples-shift], False)
         print(f'Time delay between the signal and its basis filtered version for {i + 1}: {time_delay} samples')
         # time_delay = 0
         sig_filtered_base_adj, signal_adj, mse, err2sig_ratio = time_adjust(sig_filtered_base,
-                                                                            signals[i, :n_points-shift], time_delay)
+                                                                            sigs[i, :n_samples-shift], time_delay)
         print(
             f'Error to signal ratio for the estimation of the main signal using basis filter for {i + 1}: {err2sig_ratio}')
         basis_errs[i] = err2sig_ratio
 
         if i == sig_sel_id:
             plt.figure()
-            index = range(n_points // 2,n_points // 2+500)
+            index = range(n_samples // 2,n_samples // 2+500)
             plt.plot(t[index], np.abs(signal_adj[index]),'r-', linewidth=0.5)
-            # plt.plot(t[index], np.abs(signals[i, index]), 'b-', linewidth=0.5)
+            # plt.plot(t[index], np.abs(sigs[i, index]), 'b-', linewidth=0.5)
             plt.plot(t[index], np.abs(sig_filtered_base_adj[index]), 'b-', linewidth=0.5)
             # plt.plot(t[index], np.abs(sig_filtered_base[i, index]),'r-', linewidth=0.5)
             plt.title('Signal and its recovered basis filtered in time domain')
@@ -330,7 +329,7 @@ if __name__ == '__main__':
             plt.ylabel('Magnitude')
             plt.show()
 
-            freq_range = center_freq
+            freq_range = fil_cf
             coeffs_range = np.arange(rx_sel_id * fil_bank_num, rx_sel_id * fil_bank_num + fil_bank_num)
             coeffs = np.abs(sig_bank_coeffs[coeffs_range])
 

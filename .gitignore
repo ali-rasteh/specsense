@@ -1,4 +1,5 @@
 /desktop.ini
 /.idea
 /__pycache__
-/test.py
+/other/test.py
+/other/desktop.ini

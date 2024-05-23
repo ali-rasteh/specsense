@@ -334,10 +334,6 @@ def basis_fir_ds_us(input, fil_base, t, freq, center_freq, iters, ds_rate, us_ra
 
 
 
-
 if __name__ == '__main__':
     pass
 
-    # sig_1 = np.random.rand(100)
-    # sig_1 = np.array([1,2,3,4,5])
-    # extract_delay(sig_1,sig_1,True)
