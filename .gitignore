@@ -1,5 +1,5 @@
-/desktop.ini
-/.idea
-/__pycache__
-/other/test.py
-/other/desktop.ini
+.idea
+__pycache__
+desktop.ini
+python/other/test.py
+matlab/other/
