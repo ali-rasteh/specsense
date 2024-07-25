@@ -48,6 +48,34 @@ def wiener_fir(input, output, filter_order_pos, filter_order_neg):
     return wiener_filter_coef
 
 
+def wiener_fir_param(sig_bw, sig_pwr, sig_cf, spatial_sig, snr, filter_order_pos, filter_order_neg):
+
+    filter_order = filter_order_pos + filter_order_neg
+    filter_length = filter_order + 1
+
+    N_in = spatial_sig.shape[0]
+    N_out = spatial_sig.shape[1]
+    Rxx = np.zeros((filter_length, filter_length)).astype(complex)
+    N0 = (np.sum(spatial_sig[0,:]*sig_pwr*sig_bw) / np.sum(sig_bw)) / (10 ** (snr / 10))
+
+    for i in range(filter_length):
+        for j in range(filter_length):
+            t = i-j
+            for k in range(N_out):
+                Rxx[i, j] += spatial_sig[0,k] * np.conj(spatial_sig[0,k]) * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * sig_pwr[k] * sig_bw[k] * np.sinc(sig_bw[k]*t)
+            if t==0:
+                Rxx[i, j] += N0
+
+    Ryx = np.zeros((filter_length, 1)).astype(complex)
+    for j in range(filter_length):
+        t = j - filter_order_neg
+        for k in range(N_out):
+            Ryx[j, 0] = np.conj(spatial_sig[0,k]) * sig_pwr[k] * sig_bw[k] * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * np.sinc(sig_bw[k] * t)
+
+    wiener_filter_coef = np.linalg.solve(Rxx, Ryx)
+    return wiener_filter_coef
+
+
 def wiener_fir_vector(input, output, filter_order_pos, filter_order_neg):
     # input_signals is a N_in x N matrix consisting N_in signals each with N sample points
     # output_signals is N_out x N matrix consisting N_out signals each with N sample points
@@ -78,6 +106,45 @@ def wiener_fir_vector(input, output, filter_order_pos, filter_order_neg):
 
     return wiener_filter_coef
 
+
+def wiener_fir_vector_param(sig_bw, sig_pwr, sig_cf, spatial_sig, snr, filter_order_pos, filter_order_neg):
+
+    # input_signals is a N_in x N matrix consisting N_in signals each with N sample points
+    # output_signals is N_out x N matrix consisting N_out signals each with N sample points
+
+    filter_order = filter_order_pos + filter_order_neg
+    filter_length = filter_order+1
+    N_in = spatial_sig.shape[0]
+    N_out = spatial_sig.shape[1]
+    N0 = (np.sum(np.mean(spatial_sig,axis=0) * sig_pwr * sig_bw) / np.sum(sig_bw)) / (10 ** (snr / 10))
+
+    Rxx = np.zeros((filter_length * N_in, filter_length * N_in)).astype(complex)
+    for i in range(filter_length):
+        for j in range(filter_length):
+            t = j-i
+            for k in range(N_out):
+                Rxx[i*N_in:(i+1)*N_in, j*N_in:(j+1)*N_in] += np.outer(spatial_sig[:, k], np.conj(spatial_sig[:, k])) * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * sig_pwr[k] * sig_bw[k] * np.sinc(sig_bw[k] * t)
+            if t == 0:
+                Rxx[i*N_in:(i+1)*N_in, j*N_in:(j+1)*N_in] += N0 * np.eye(N_in)
+
+    Ryx = np.zeros((N_out, filter_length * N_in)).astype(complex)
+    for j in range(filter_length):
+        t = j
+        temp = None
+        for k in range(N_out):
+            Rx_a = np.conj(spatial_sig[:, k]) * sig_pwr[k] * sig_bw[k] * np.exp(
+                    2 * np.pi * 1j * sig_cf[k] * t) * np.sinc(sig_bw[k] * t)
+            Rx_a = Rx_a.reshape(1,-1)
+            if temp is None:
+                temp = Rx_a.copy()
+            else:
+                temp = np.vstack((temp, Rx_a))
+        Ryx[:,j*N_in:(j+1)*N_in] = temp.copy()
+
+    wiener_filter_coef = np.linalg.solve(Rxx.T, Ryx.T).T  # Equivalent to Ryx / Rxx
+    print(f'Rxx determinant: {np.linalg.det(Rxx)}')
+
+    return wiener_filter_coef
 
 
 def extract_delay(sig_1, sig_2, plot_corr=False):
@@ -167,6 +234,7 @@ def basis_fir_us(input, fil_base, t, freq, center_freq, iters, us_rate, plot_pro
     fil_base_shifted = np.exp(2 * np.pi * 1j * center_freq * t[:len(fil_base)]) * fil_base
 
     grp_dly = ((len(fil_base)-1) // 2) * (2**(iters + 1) - 1)
+
     if iters == 0:
         # output = np.convolve(input, fil_base_shifted, mode='same')
         output = lfilter(fil_base_shifted, 1, input)
@@ -195,7 +263,7 @@ def basis_fir_us(input, fil_base, t, freq, center_freq, iters, us_rate, plot_pro
             w, h = freqz(fil_us[0], worN=om)
             plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Upsampled Filter')
             plt.title('Base and Upsampled Filters Frequency Response')
-            plt.xlabel('Normalized Frequency (xpi rad/sample)')
+            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
             plt.ylabel('Magnitude (dB)')
             plt.legend()
             plt.show()
