@@ -4,18 +4,21 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision.transforms as transforms
 from torch import nn, optim
 import torch.nn.functional as F
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 
 
 
 class NumpyDataset(Dataset):
 
-    def __init__(self, dataset_path, data_transform=None, mask_transform=None, norm_mode='max'):
+    def __init__(self, dataset_path, data_transform=None, mask_transform=None, norm_mode_data='std', norm_mode_mask='std', mask_mode='binary'):
         dataset = np.load(dataset_path)
 
         self.data = dataset['data']
         self.masks = dataset['masks']
-        self.norm_mode = norm_mode
+        self.norm_mode_data = norm_mode_data
+        self.norm_mode_mask = norm_mode_mask
+        self.mask_mode = mask_mode
 
         self.data_transform = data_transform
         self.mask_transform = mask_transform
@@ -28,24 +31,49 @@ class NumpyDataset(Dataset):
         self.max_masks = self.masks.max()
         self.mean_masks = self.masks.mean()
         self.std_masks = self.masks.std()
+        
+        if self.norm_mode_data=='max':
+            self.data = (self.data - self.min_data) / (self.max_data - self.min_data)
+        elif self.norm_mode_data=='std':
+            self.data = (self.data - self.mean_data) / self.std_data
+        elif self.norm_mode_data=='max&std':
+            self.data = (self.data - self.min_data) / (self.max_data - self.min_data)
+            self.data = (self.data - self.data.mean()) / self.data.std()
+        elif self.norm_mode_data=='none':
+            pass
+
+        if self.norm_mode_mask=='max':
+            self.masks = (self.masks - self.min_masks) / (self.max_masks - self.min_masks)
+        elif self.norm_mode_mask=='std':
+            self.masks = (self.masks - self.mean_masks) / self.std_masks
+        elif self.norm_mode_mask=='max&std':
+            self.masks = (self.masks - self.min_masks) / (self.max_masks - self.min_masks)
+            self.masks = (self.masks - self.masks.mean()) / self.masks.std()
+        elif self.norm_mode_mask=='none':
+            pass
 
 
     def __len__(self):
         return len(self.data)
     
 
-    def _transform(self, data, min=0, max=1, mean=0, std=1, norm_mode='max'):
-        if norm_mode=='max':
-            data_t = (data - min) / (max - min)
-        elif norm_mode=='std':
-            data_t = (data - mean) / std
-        elif norm_mode=='none':
-            data_t = data.copy()
-        data_t = torch.tensor(data_t, dtype=torch.float32).unsqueeze(0)
+    def _transform(self, data, min=0, max=1, mean=0, std=1, norm_mode='std'):
+        
+        if self.mask_mode=='channels':
+            data_t = torch.tensor(data, dtype=torch.float32)
+        else:
+            data_t = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
+        
+        # if norm_mode=='max':
+        #     data_t = (data - min) / (max - min)
+        # elif norm_mode=='std':
+        #     data_t = (data - mean) / std
+        # elif norm_mode=='none':
+        #     data_t = data.copy()
+        # data_t = torch.tensor(data_t, dtype=torch.float32).unsqueeze(0)
 
         # if self.data_transform:
         #     data = self.data_transform(data)
-        
         # if self.mask_transform:
         #     mask = self.mask_transform(mask)
 
@@ -55,8 +83,8 @@ class NumpyDataset(Dataset):
     def __getitem__(self, idx):
         data = self.data[idx]
         mask = self.masks[idx]
-        data = self._transform(data, min=self.min_data, max=self.max_data, mean=self.mean_data, std=self.std_data, norm_mode=self.norm_mode)
-        mask = self._transform(mask, min=self.min_masks, max=self.max_masks, mean=self.mean_masks, std=self.std_masks, norm_mode='none')
+        data = self._transform(data, min=self.min_data, max=self.max_data, mean=self.mean_data, std=self.std_data, norm_mode=self.norm_mode_data)
+        mask = self._transform(mask, min=self.min_masks, max=self.max_masks, mean=self.mean_masks, std=self.std_masks, norm_mode=self.norm_mode_mask)
 
         return data, mask
 
@@ -64,36 +92,69 @@ class NumpyDataset(Dataset):
 
 
 class UNet1D(nn.Module):
-    def __init__(self, n_layers = 10):
+    def __init__(self, n_layers = 10, dim=1, n_out_channels=1):
         super(UNet1D, self).__init__()
 
         self.n_layers = n_layers
+        self.dim = dim
+        self.n_out_channels = n_out_channels
 
-        def conv_block(in_channels, out_channels):
+        def Conv(in_channels=2, out_channels=1, kernel_size=1, padding=0):
+            if self.dim == 1:
+                return nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
+            elif self.dim == 2:
+                return nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
+            elif self.dim == 3:
+                return nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
+        
+        def ConvTranspose(in_channels=1, out_channels=1, kernel_size=2, stride=2):
+            if self.dim == 1:
+                return nn.ConvTranspose1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
+            elif self.dim == 2:
+                return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
+            elif self.dim == 3:
+                return nn.ConvTranspose3d(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
+
+        def MaxPool(kernel_size=2):
+            if self.dim == 1:
+                return nn.MaxPool1d(kernel_size=kernel_size)
+            elif self.dim == 2:
+                return nn.MaxPool2d(kernel_size=kernel_size)
+            elif self.dim == 3:
+                return nn.MaxPool3d(kernel_size=kernel_size)
+
+        def BatchNorm(num_features=1):
+            if self.dim == 1:
+                return nn.BatchNorm1d(num_features=num_features)
+            elif self.dim == 2:
+                return nn.BatchNorm2d(num_features=num_features)
+            elif self.dim == 3:
+                return nn.BatchNorm3d(num_features=num_features)
+            
+        def conv_block(in_channels=1, out_channels=1, kernel_size=3):
             return nn.Sequential(
-                nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm1d(out_channels),
+                Conv(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, padding=1),
+                BatchNorm(out_channels),
                 nn.ReLU(inplace=True)
-                # nn.Conv1d(out_channels, out_channels, kernel_size=3, padding=1),
-                # nn.BatchNorm2d(out_channels),
-                # nn.ReLU(inplace=True)
             )
+
 
         self.encoder = nn.ModuleList([])
         for i in range(self.n_layers):
-            self.encoder.append(conv_block(2**i, 2**(i+1)))
+            self.encoder.append(conv_block(in_channels=2**i, out_channels=2**(i+1)))
 
-        self.pool = nn.MaxPool1d(2)
+        self.pool = MaxPool(kernel_size=2)
 
-        self.middle = conv_block(2**(i+1), 2**(i+2))
+        self.middle = conv_block(in_channels=2**(i+1), out_channels=2**(i+2))
 
         self.up = nn.ModuleList([])
         self.decoder = nn.ModuleList([])
         for i in range(self.n_layers):
-            self.up.append(nn.ConvTranspose1d(2**(self.n_layers-i+1), 2**(self.n_layers-i), kernel_size=2, stride=2))
-            self.decoder.append(conv_block(2**(self.n_layers-i+1), 2**(self.n_layers-i)))
+            self.up.append(ConvTranspose(in_channels=2**(self.n_layers-i+1), out_channels=2**(self.n_layers-i), kernel_size=2, stride=2))
+            self.decoder.append(conv_block(in_channels=2**(self.n_layers-i+1), out_channels=2**(self.n_layers-i)))
 
-        self.out_conv = nn.Conv1d(2, 1, kernel_size=1)
+        self.out_conv = Conv(in_channels=2, out_channels=self.n_out_channels, kernel_size=1)
+
 
 
     def forward(self, x):
@@ -133,6 +194,9 @@ class ss_detection_Unet(object):
     def __init__(self, params=None):
 
         self.dataset_path = params.dataset_path
+        self.shape = params.shape
+        self.n_sigs_max = params.n_sigs_max
+        self.mask_mode = params.mask_mode
         self.eval_smooth = params.eval_smooth
         self.train_ratio = params.train_ratio
         self.val_ratio = params.val_ratio
@@ -146,7 +210,8 @@ class ss_detection_Unet(object):
         self.n_epochs = params.n_epochs
         self.nepoch_save = params.nepoch_save
         self.nbatch_log = params.nbatch_log
-        self.norm_mode = params.norm_mode
+        self.norm_mode_data = params.norm_mode_data
+        self.norm_mode_mask = params.norm_mode_mask
         self.train = params.train
         self.test = params.test
         self.load_model_params = params.load_model_params
@@ -155,8 +220,8 @@ class ss_detection_Unet(object):
 
 
         self.data_transform = transforms.Compose([
-        transforms.ToTensor()
-        # transforms.Normalize(mean=[0.5], std=[0.5])
+            transforms.ToTensor()
+            # transforms.Normalize(mean=[0.5], std=[0.5])
         ])
         self.mask_transform = transforms.Compose([
             transforms.ToTensor()
@@ -166,7 +231,8 @@ class ss_detection_Unet(object):
 
 
     def generate_model(self):
-        self.model = UNet1D(n_layers=self.n_layers)
+        n_out_channels = self.n_sigs_max if self.mask_mode=='channels' else 1
+        self.model = UNet1D(n_layers=self.n_layers, dim=len(self.shape)-1, n_out_channels=n_out_channels)
         print('Number of parameters in the model: {}'.format(self.count_parameters()))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -189,7 +255,10 @@ class ss_detection_Unet(object):
 
 
     def load_optimizer(self):
-        self.criterion = nn.BCEWithLogitsLoss()
+        if self.mask_mode=='binary' or self.mask_mode=='channels':
+            self.criterion = nn.BCEWithLogitsLoss()
+        elif self.mask_mode=='snr':
+            self.criterion = nn.MSELoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=self.sched_step_size, gamma=self.sched_gamma)
 
@@ -197,7 +266,7 @@ class ss_detection_Unet(object):
 
 
     def generate_data_loaders(self):
-        self.dataset = NumpyDataset(dataset_path=self.dataset_path, data_transform=self.data_transform, mask_transform=self.mask_transform, norm_mode=self.norm_mode)
+        self.dataset = NumpyDataset(dataset_path=self.dataset_path, data_transform=self.data_transform, mask_transform=self.mask_transform, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, mask_mode=self.mask_mode)
 
         train_size = int(self.train_ratio * len(self.dataset))
         val_size = int(self.val_ratio * len(self.dataset))
@@ -236,20 +305,32 @@ class ss_detection_Unet(object):
     def evaluate_model(self, model, device, data_loader):
         model.eval()
         score = 0
+        mask_energy = 0
+        print("Dataloader length: {}".format(len(data_loader)))
         with torch.no_grad():
             for data, mask in data_loader:
                 data = data.to(device)
                 mask = mask.to(device)
                 output = model(data)
-                score += self.intersection_over_union(output, mask)
-        score = score/len(data_loader)
+                # print(output.shape)
+                # print(mask.shape)
+                if self.mask_mode=='binary' or self.mask_mode=='channels':
+                    score += self.intersection_over_union(output, mask)
+                elif self.mask_mode=='snr':
+                    score += F.mse_loss(output, mask).item()
+                    # score += ((mask.cpu().numpy()-output.cpu().numpy())**2).mean()
+                    mask_energy += torch.mean(mask**2).item()
+        score /= len(data_loader)
+        mask_energy /= len(data_loader)
+        if self.mask_mode=='snr':
+            score = score/mask_energy
 
         return(score)
 
 
     def train_model(self):
-        print("Starting to train the Neural Network...")
         if self.train:
+            print("Starting to train the Neural Network...")
             for epoch in range(self.n_epochs):
                 batch_id = 0
                 self.model.train()
@@ -275,18 +356,19 @@ class ss_detection_Unet(object):
                     torch.save(self.model.state_dict(), self.model_save_path+'model_weights_{}.pth'.format(epoch + 1))
                     torch.save(self.model, self.model_save_path+'model_{}.pth'.format(epoch + 1))
                     print("Saved the Neural Network's model")
-                    test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
-                    print('Accuracy on test data: {}\n'.format(test_acc))
+                    self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
+                    print('Accuracy on test data: {}\n'.format(self.test_acc))
 
     
     def test_model(self):
-        print("Starting to test the Neural Network...")
         if self.test:
-            train_acc = self.evaluate_model(self.model, self.device, self.train_loader)
-            print('Accuracy on train data: {}'.format(train_acc))
+            print("Starting to test the Neural Network...")
 
-            test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
-            print('Accuracy on test data: {}\n'.format(test_acc))
+            self.train_acc = self.evaluate_model(self.model, self.device, self.train_loader)
+            print('Accuracy on train data: {}'.format(self.train_acc))
+
+            self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
+            print('Accuracy on test data: {}\n'.format(self.test_acc))
 
 
 
