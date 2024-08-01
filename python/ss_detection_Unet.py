@@ -138,7 +138,6 @@ class UNet1D(nn.Module):
                 nn.ReLU(inplace=True)
             )
 
-
         self.encoder = nn.ModuleList([])
         for i in range(self.n_layers):
             self.encoder.append(conv_block(in_channels=2**i, out_channels=2**(i+1)))
@@ -156,32 +155,22 @@ class UNet1D(nn.Module):
         self.out_conv = Conv(in_channels=2, out_channels=self.n_out_channels, kernel_size=1)
 
 
-
     def forward(self, x):
         enc = []
         dec = []
         enc.append(self.encoder[0](x))
-        # print(enc[-1].shape)
         for i in range(1,self.n_layers):
             enc.append(self.encoder[i](self.pool(enc[-1])))
-            # print(enc[-1].shape)
 
         middle = self.middle(self.pool(enc[-1]))
-        # print(1,middle.shape)
 
         dec.append(self.up[0](middle))
-        # print(dec[-1].shape)
         dec[-1] = torch.cat((dec[-1], enc[-1]), dim=1)
-        # print(dec[-1].shape)
         dec[-1] = self.decoder[0](dec[-1])
-        # print(dec[-1].shape)
         for i in range(1,self.n_layers):
             dec.append(self.up[i](dec[-1]))
-            # print(dec[-1].shape)
             dec[-1] = torch.cat((dec[-1], enc[self.n_layers-i-1]), dim=1)
-            # print(dec[-1].shape)
             dec[-1] = self.decoder[i](dec[-1])
-            # print(dec[-1].shape)
 
         return self.out_conv(dec[-1])
 
@@ -218,10 +207,9 @@ class ss_detection_Unet(object):
         self.model_save_path = params.model_save_path
         self.model_load_path = params.model_load_path
 
-
         self.data_transform = transforms.Compose([
-            transforms.ToTensor()
-            # transforms.Normalize(mean=[0.5], std=[0.5])
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5], std=[0.5])
         ])
         self.mask_transform = transforms.Compose([
             transforms.ToTensor()
@@ -232,7 +220,7 @@ class ss_detection_Unet(object):
 
     def generate_model(self):
         n_out_channels = self.n_sigs_max if self.mask_mode=='channels' else 1
-        self.model = UNet1D(n_layers=self.n_layers, dim=len(self.shape)-1, n_out_channels=n_out_channels)
+        self.model = UNet1D(n_layers=self.n_layers, dim=len(self.shape), n_out_channels=n_out_channels)
         print('Number of parameters in the model: {}'.format(self.count_parameters()))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -348,8 +336,6 @@ class ss_detection_Unet(object):
                         print(f"Batch {batch_id + 1}/{len(self.train_loader)}, Loss: {loss.item()}, lr: {self.scheduler.get_last_lr()}")
                     batch_id += 1
 
-                self.scheduler.step()
-
                 print(f"Epoch {epoch + 1}/{self.n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {self.scheduler.get_last_lr()}\n")
                 
                 if (epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1:
@@ -359,7 +345,9 @@ class ss_detection_Unet(object):
                     self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
                     print('Accuracy on test data: {}\n'.format(self.test_acc))
 
+                self.scheduler.step()
     
+
     def test_model(self):
         if self.test:
             print("Starting to test the Neural Network...")
