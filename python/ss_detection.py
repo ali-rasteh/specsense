@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import firwin, lfilter, freqz
 # from scipy.fftpack import fft, fftshift
 from numpy.fft import fft, fftshift
-from numpy.random import randn, rand, randint, choice, exponential
+from numpy.random import randn, rand, randint, choice, exponential, uniform
 from filter_utils import *
 import time
 import string
@@ -17,6 +17,8 @@ class specsense_detection(object):
     def __init__(self, params):
 
         self.shape = params.shape
+        self.size_sam_mode = params.size_sam_mode
+        self.snr_sam_mode = params.snr_sam_mode
         self.n_simulations = params.n_simulations
         self.noise_power = params.noise_power
         self.ML_thr = params.ML_thr
@@ -25,44 +27,84 @@ class specsense_detection(object):
         print("Initialized Spectrum Sensing class instance.")
 
 
-    def plot_chi_squared_cdf(DoF=1, x_max=100, n_points=1000):
-        # Generate x values
-        x = np.linspace(0, x_max, n_points)
-        
-        # Calculate CDF values
-        cdf = chi2.cdf(x, DoF)
-        
-        # Plot the CDF
+    def plot_MD_vs_SNR(self, snr_min=0.1, snr_max=100.0, n_points=1000, dof_min=1, dof_max=1024, n_dof=11, p_fa=1e-6):
+
+        snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_points)
+        dofs = np.logspace(np.log10(dof_min), np.log10(dof_max), n_dof).round().astype(int)
+        # dofs = np.linspace(dof_min, dof_max, n_dof).round().astype(int)
+        seen = set()
+        dofs = [x for x in dofs if not (x in seen or seen.add(x))]
+        dofs = np.array(dofs)
+
         plt.figure(figsize=(8, 6))
-        plt.plot(x, cdf, label=f'CDF of Chi-Squared (DoF={DoF})')
-        plt.title('Cumulative Distribution Function of the Chi-Squared Distribution')
-        plt.xlabel('x')
-        plt.ylabel('CDF')
+        for dof in dofs:
+            x = chi2.ppf(1-p_fa, dof)
+            p_md = chi2.cdf(x/(1+snrs), dof)
+            plt.plot(10*np.log10(snrs), p_md, label=f'DoF={dof}')
+        plt.title('Probability of Missed Detection vs SNR for Different DoFs')
+        plt.xlabel('SNR (dB)')
+        plt.ylabel('Probability of Missed Detection')
         plt.legend()
         plt.grid(True)
+        plt.savefig(self.figs_dir + 'md_vs_snr_dof.pdf', format='pdf')
         plt.show()
 
 
-    def generate_random_regions(self, shape=(1000,), n_regions=1, min_size=None, max_size=None):
+    def plot_MD_vs_DoF(self, dof_min=1, dof_max=1024, n_points=1000, snr_min=0.25, snr_max=64, n_snr=9, p_fa=1e-6):
+
+        dofs = np.logspace(np.log10(dof_min), np.log10(dof_max), n_points).round().astype(int)
+        # dofs = np.linspace(dof_min, dof_max, n_points).round().astype(int)
+        seen = set()
+        dofs = [x for x in dofs if not (x in seen or seen.add(x))]
+        dofs = np.array(dofs)
+        snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_snr)
+
+        plt.figure(figsize=(8, 6))
+        for snr in snrs:
+            x = chi2.ppf(1-p_fa, dofs)
+            p_md = chi2.cdf(x/(1+snr), dofs)
+            # plt.plot(dofs, np.log(p_md), label='SNR={:0.2f}'.format(snr))
+            plt.semilogx(dofs, p_md, label='SNR={:0.2f}'.format(snr))
+        plt.title('Probability of Missed Detection vs DoF for Different SNRs')
+        plt.xlabel('DoF (Logarithmic)')
+        plt.ylabel('Probability of Missed Detection')
+        # plt.xlabel('DoF')
+        # plt.ylabel('Probability of Missed Detection (Logarithmic)')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(self.figs_dir + 'md_vs_dof_snr.pdf', format='pdf')
+        plt.show()
+
+
+    def generate_random_regions(self, shape=(1000,), n_regions=1, min_size=None, max_size=None, size_sam_mode='log'):
         regions = []
         ndims = len(shape)
         for _ in range(n_regions):
             region_slices = []
             for d, dim in enumerate(shape):
                 if min_size is not None and max_size is not None:
-                    size = randint(min_size[d], max_size[d] + 1)
+                    s1 = min_size[d]
+                    s2 = max_size[d] + 1
                 else:
-                    size = randint(1, min(101, (dim+1)//2+1))
+                    s1 = 1
+                    s2 = min(101, (dim+1)//2+1)
+                if size_sam_mode=='lin':
+                    size = randint(s1, s2)
+                elif size_sam_mode=='log':
+                    margin=1e-9
+                    size = uniform(np.log10(s1), np.log10(s2-margin))
+                    size = int(10 ** size)
                 start = randint(0, dim-size+1)
                 size = min(size, dim-start)
                 region_slices.append(slice(start, start + size))
             regions.append(tuple(region_slices))
+
         return regions
 
 
-    def generate_random_PSD(self, shape=(1000,), sig_regions=None, n_sigs=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None, noise_power=1, snrs=np.array([10]), mask_mode='binary'):
+    def generate_random_PSD(self, shape=(1000,), sig_regions=None, n_sigs=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None, noise_power=1, snr_range=np.array([10,10]), size_sam_mode='log', snr_sam_mode='log', mask_mode='binary'):
 
-        sig_powers = noise_power * snrs
+        sig_power_range = noise_power * snr_range.astype(float)
         psd = exponential(noise_power, shape)
         if mask_mode=='binary' or mask_mode=='snr':
             mask = np.zeros(shape, dtype=float)
@@ -70,12 +112,17 @@ class specsense_detection(object):
             mask = np.zeros((n_sigs_max,)+shape, dtype=float)
 
         if sig_regions is None:
-            regions = self.generate_random_regions(shape=shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max)
+            regions = self.generate_random_regions(shape=shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=size_sam_mode)
         else:
             regions = sig_regions
 
         for sig_id, region in enumerate(regions):
-            sig_power = choice(sig_powers)
+            if snr_sam_mode=='lin':
+                # sig_power = choice(sig_powers)
+                sig_power = uniform(sig_power_range[0], sig_power_range[1])
+            elif snr_sam_mode=='log':
+                sig_power = uniform(np.log10(sig_power_range[0]), np.log10(sig_power_range[1]))
+                sig_power = 10**sig_power
             region_shape = tuple(slice_.stop - slice_.start for slice_ in region)
             region_power = exponential(sig_power, region_shape)
             psd[region] += region_power
@@ -86,7 +133,7 @@ class specsense_detection(object):
             elif mask_mode=='channels':
                 region_m=(slice(sig_id, sig_id+1),)+region
                 mask[region_m] = 1.0
-
+    
         return (psd, mask)
 
 
@@ -394,7 +441,8 @@ class specsense_detection(object):
         ll_list = []
         for i in range(10):
             n_sigs = 0
-            psd, mask = self.generate_random_PSD(shape=self.shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snrs=np.array([10]), mask_mode='binary')
+            (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([10,10]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
+
             (S_ML, ll_max) = self.ML_detector_efficient(psd)
             ll_list.append(ll_max)
         
@@ -415,8 +463,8 @@ class specsense_detection(object):
             for i in range(self.n_simulations):
                 print('Simulation #: {}, SNR: {}'.format(i+1, snr))
                 n_sigs = randint(n_sigs_min, n_sigs_max+1)
-                regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max)
-                psd, mask = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snrs=np.array([snr]), mask_mode='binary')
+                regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
+                (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
                 (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr)
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[snr] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
@@ -424,7 +472,7 @@ class specsense_detection(object):
         return det_rate
 
     
-    def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, snrs=np.array([10])):
+    def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, snr_range=np.array([10,10])):
         print("Starting to sweep ML detector on Signal sizes...")
         
         det_rate = {}
@@ -433,8 +481,8 @@ class specsense_detection(object):
             for i in range(self.n_simulations):
                 print('Simulation #: {}, Size: {}'.format(i+1, size))
                 n_sigs = randint(n_sigs_min, n_sigs_max+1)
-                regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=size, max_size=size)
-                psd, mask = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snrs=snrs, mask_mode='binary')
+                regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=size, max_size=size, size_sam_mode=self.size_sam_mode)
+                (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
                 (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr)
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[size] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
@@ -442,20 +490,20 @@ class specsense_detection(object):
         return det_rate
 
 
-    def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None, snrs=np.array([10]), mask_mode='binary'): 
-        print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, sig_size={}-{}, snrs={}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, sig_size_min, sig_size_max, snrs))
+    def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None, snr_range=np.array([10,10]), mask_mode='binary'): 
+        print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, sig_size={}-{}, snrs={}-{}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, sig_size_min, sig_size_max, snr_range[0], snr_range[1]))
         
         data = []
         masks = []
         for _ in range(n_dataset):
             n_sigs = randint(n_sigs_min, n_sigs_max+1)
-            (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs_max, sig_size_min=sig_size_min, sig_size_max=sig_size_max, noise_power=self.noise_power, snrs=snrs, mask_mode=mask_mode)
+            (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs_max, sig_size_min=sig_size_min, sig_size_max=sig_size_max, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode=mask_mode)
             data.append(psd)
             masks.append(mask)
         data = np.array(data)
         masks = np.array(masks)
         np.savez(dataset_path, data=data, masks=masks)
-
+        
         print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}")
 
 

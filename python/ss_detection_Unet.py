@@ -5,6 +5,7 @@ import torchvision.transforms as transforms
 from torch import nn, optim
 import torch.nn.functional as F
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+import matplotlib.pyplot as plt
 
 
 
@@ -57,6 +58,12 @@ class NumpyDataset(Dataset):
         return len(self.data)
     
 
+    def _get_masks_zeroone_ratio(self):
+        n_zeros = (self.masks == 0).sum()
+        n_ones = (self.masks == 1).sum()
+        return n_zeros / n_ones
+    
+
     def _transform(self, data, min=0, max=1, mean=0, std=1, norm_mode='std'):
         
         if self.mask_mode=='channels':
@@ -89,6 +96,22 @@ class NumpyDataset(Dataset):
         return data, mask
 
 
+
+# Custom binarization function using Straight-Through Estimator
+class BinarizeSTE(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, thr=0.0):
+        ctx.save_for_backward(input)
+        return (input > thr).float()
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_tensors
+        grad_input = grad_output.clone()
+        grad_input[input < 0.0] = 0.0
+        grad_input[input > 1.0] = 0.0
+        return grad_input, None
+    
 
 
 class UNet1D(nn.Module):
@@ -153,6 +176,7 @@ class UNet1D(nn.Module):
             self.decoder.append(conv_block(in_channels=2**(self.n_layers-i+1), out_channels=2**(self.n_layers-i)))
 
         self.out_conv = Conv(in_channels=2, out_channels=self.n_out_channels, kernel_size=1)
+        self.sigmoid = nn.Sigmoid()
 
 
     def forward(self, x):
@@ -172,7 +196,10 @@ class UNet1D(nn.Module):
             dec[-1] = torch.cat((dec[-1], enc[self.n_layers-i-1]), dim=1)
             dec[-1] = self.decoder[i](dec[-1])
 
-        return self.out_conv(dec[-1])
+        output = self.out_conv(dec[-1])
+        # output = self.sigmoid(self.out_conv(dec[-1]))
+        
+        return output
 
 
 
@@ -194,6 +221,11 @@ class ss_detection_Unet(object):
         self.batch_size = params.batch_size
         self.n_layers = params.n_layers
         self.lr = params.lr
+        self.apply_pos_weight = params.apply_pos_weight
+        self.mask_thr = params.mask_thr
+        self.draw_histogram = params.draw_histogram
+        self.hist_thr = params.hist_thr
+        self.hist_bins = params.hist_bins
         self.sched_gamma = params.sched_gamma
         self.sched_step_size = params.sched_step_size
         self.n_epochs = params.n_epochs
@@ -204,8 +236,9 @@ class ss_detection_Unet(object):
         self.train = params.train
         self.test = params.test
         self.load_model_params = params.load_model_params
-        self.model_save_path = params.model_save_path
-        self.model_load_path = params.model_load_path
+        self.model_dir = params.model_dir
+        self.model_name = params.model_name
+        self.figs_dir = params.figs_dir
 
         self.data_transform = transforms.Compose([
             transforms.ToTensor(),
@@ -233,8 +266,8 @@ class ss_detection_Unet(object):
 
     def load_model(self):
         if self.load_model_params:
-            self.model.load_state_dict(torch.load(self.model_load_path))
-            # self.model = torch.load(self.model_load_path)
+            self.model.load_state_dict(torch.load(self.model_dir+self.model_name))
+            # self.model = torch.load(self.model_dir+self.model_name)
             print("Loaded Neural network's model.")
 
 
@@ -244,9 +277,16 @@ class ss_detection_Unet(object):
 
     def load_optimizer(self):
         if self.mask_mode=='binary' or self.mask_mode=='channels':
-            self.criterion = nn.BCEWithLogitsLoss()
+            if self.apply_pos_weight:
+                pos_weight=torch.tensor([self.dataset_zeroone_ratio]).to(self.device)
+                print("Applied pos_weight to the loss function: {}".format(pos_weight))
+            else:
+                pos_weight=None
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            # self.criterion = nn.BCELoss()
         elif self.mask_mode=='snr':
             self.criterion = nn.MSELoss()
+        
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=self.sched_step_size, gamma=self.sched_gamma)
 
@@ -255,6 +295,10 @@ class ss_detection_Unet(object):
 
     def generate_data_loaders(self):
         self.dataset = NumpyDataset(dataset_path=self.dataset_path, data_transform=self.data_transform, mask_transform=self.mask_transform, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, mask_mode=self.mask_mode)
+        if self.apply_pos_weight:
+            self.dataset_zeroone_ratio = self.dataset._get_masks_zeroone_ratio()
+        else:
+            self.dataset_zeroone_ratio = None
 
         train_size = int(self.train_ratio * len(self.dataset))
         val_size = int(self.val_ratio * len(self.dataset))
@@ -270,22 +314,22 @@ class ss_detection_Unet(object):
 
 
     def intersection_over_union(self, pred, target):
-        pred = pred > 0.5
-        target = target > 0.5
+        pred_c = pred > self.mask_thr
+        target_c = target > self.mask_thr
         
-        intersection = (pred & target).float().sum()
-        union = (pred | target).float().sum()
+        intersection = (pred_c & target_c).float().sum()
+        union = (pred_c | target_c).float().sum()
         
         iou = (intersection + self.eval_smooth) / (union + self.eval_smooth)
         return iou.mean().item()
 
 
     def dice_coefficient(self, pred, target):
-        pred = pred > 0.5
-        target = target > 0.5
+        pred_c = pred > self.mask_thr
+        target_c = target > self.mask_thr
         
-        intersection = (pred & target).float().sum()
-        dice = (2. * intersection + self.eval_smooth) / (pred.float().sum() + target.float().sum() + self.eval_smooth)
+        intersection = (pred_c & target_c).float().sum()
+        dice = (2. * intersection + self.eval_smooth) / (pred_c.float().sum() + target_c.float().sum() + self.eval_smooth)
         
         return dice.mean().item()
 
@@ -300,14 +344,26 @@ class ss_detection_Unet(object):
                 data = data.to(device)
                 mask = mask.to(device)
                 output = model(data)
-                # print(output.shape)
-                # print(mask.shape)
                 if self.mask_mode=='binary' or self.mask_mode=='channels':
                     score += self.intersection_over_union(output, mask)
                 elif self.mask_mode=='snr':
                     score += F.mse_loss(output, mask).item()
                     # score += ((mask.cpu().numpy()-output.cpu().numpy())**2).mean()
                     mask_energy += torch.mean(mask**2).item()
+                if self.draw_histogram:
+                    plt.figure(figsize=(10, 6))
+                    output_h=output.clone()
+                    output_h=output_h[output_h>-1*self.hist_thr]
+                    output_h[output_h<-1*self.hist_thr]=-1*self.hist_thr
+                    output_h[output_h>self.hist_thr]=self.hist_thr
+                    plt.hist(output_h.flatten().cpu().numpy(), bins=self.hist_bins, edgecolor='black')
+                    plt.title('Histogram of Neural Network Outputs')
+                    plt.xlabel('Output Values')
+                    plt.ylabel('Frequency')
+                    plt.grid(True)
+                    plt.savefig(self.figs_dir + 'NN_hist.pdf', format='pdf')
+                    plt.show()
+                    raise InterruptedError("Interrupted manually after plot.")
         score /= len(data_loader)
         mask_energy /= len(data_loader)
         if self.mask_mode=='snr':
@@ -328,6 +384,7 @@ class ss_detection_Unet(object):
                     mask = mask.to(self.device)
                     self.optimizer.zero_grad()
                     output = self.model(data)
+                    # output = BinarizeSTE.apply(output, self.mask_thr)
                     loss = self.criterion(output, mask)
                     loss.backward()
                     self.optimizer.step()
@@ -339,8 +396,8 @@ class ss_detection_Unet(object):
                 print(f"Epoch {epoch + 1}/{self.n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {self.scheduler.get_last_lr()}\n")
                 
                 if (epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1:
-                    torch.save(self.model.state_dict(), self.model_save_path+'model_weights_{}.pth'.format(epoch + 1))
-                    torch.save(self.model, self.model_save_path+'model_{}.pth'.format(epoch + 1))
+                    torch.save(self.model.state_dict(), self.model_dir+'model_weights_{}.pth'.format(epoch + 1))
+                    torch.save(self.model, self.model_dir+'model_{}.pth'.format(epoch + 1))
                     print("Saved the Neural Network's model")
                     self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
                     print('Accuracy on test data: {}\n'.format(self.test_acc))
