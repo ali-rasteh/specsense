@@ -10,6 +10,7 @@ import string
 import random
 import itertools
 from scipy.stats import chi2
+import torch
 
 
 
@@ -22,7 +23,11 @@ class specsense_detection(object):
         self.n_simulations = params.n_simulations
         self.noise_power = params.noise_power
         self.ML_thr = params.ML_thr
+        self.ML_mode = params.ML_mode
         self.figs_dir = params.figs_dir
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print('specsense_detection device: {}'.format(self.device))
 
         print("Initialized Spectrum Sensing class instance.")
 
@@ -179,61 +184,98 @@ class specsense_detection(object):
         return(self.S_ML, self.ll_max)
 
 
-    def ML_detector_efficient(self, psd, thr=0.0):
-
-        shape = np.shape(psd)
-        ndims = len(shape)
+    def ML_detector_efficient(self, psd, thr=0.0, mode='np'):
 
         self.ll_max = 0.0
         self.S_ML = None
 
+        if mode=='np':
+            shape = np.shape(psd)
+        elif mode=='torch':
+            psd = torch.tensor(psd, dtype=torch.float64)
+            psd = psd.to(self.device)
+            shape = psd.shape
+        ndims = len(shape)
+        
         # compute the cumulative sum over all axises
-        psd_cs = self.compute_cumsum(psd)
+        psd_cs = self.compute_cumsum(psd, mode=mode)
         if ndims==1:
-            psd_cs = np.pad(psd_cs, (1, 0), mode='constant')
+            if mode=='np':
+                psd_cs = np.pad(psd_cs, (1, 0), mode='constant')
+            elif mode=='torch':
+                psd_cs = torch.nn.functional.pad(psd_cs, (1, 0), mode='constant', value=0)
 
             # Compute the matrix of sums for all intervals
             sums = psd_cs[:, None] - psd_cs[None, :]
 
             # Compute the lengths of intervals
-            lens = np.arange(0, len(psd) + 1)
+            if mode=='np':
+                lens = np.arange(0, len(psd) + 1)
+            elif mode=='torch':
+                lens = torch.arange(0, len(psd) + 1, device=self.device)
 
             # Broadcast the lengths to match the shape of sums
             lens = lens[:, None] - lens[None, :]
 
             # Compute the LLRs
             means = sums/lens
-            llrs = lens*((means-1)-np.log(means))
-            llrs = np.nan_to_num(llrs, nan=0.0)
-            llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
-
-            self.S_ML = (slice(llrs_max_idx[1], llrs_max_idx[0]),)
-            self.ll_max = llrs[llrs_max_idx]
-        
+            if mode=='np':
+                llrs = lens*((means-1)-np.log(means))
+                llrs = np.nan_to_num(llrs, nan=0.0)
+                llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
+                self.S_ML = (slice(llrs_max_idx[1], llrs_max_idx[0]),)
+                self.ll_max = llrs[llrs_max_idx]
+            elif mode=='torch':
+                llrs = lens*((means-1)-torch.log(means))
+                llrs = torch.nan_to_num(llrs, nan=0.0)
+                try:
+                    llrs_max_idx = torch.unravel_index(torch.argmax(llrs), llrs.shape)
+                except:
+                    llrs_max_idx = np.unravel_index(torch.argmax(llrs).cpu().numpy(), llrs.shape)
+                self.S_ML = (slice(llrs_max_idx[1].item(), llrs_max_idx[0].item()),)
+                self.ll_max = llrs[llrs_max_idx].item()
 
         elif ndims==2:
             rows, cols = psd.shape
-            psd_cs = np.pad(psd_cs, ((1, 0), (1, 0)), mode='constant')
-
+            if mode=='np':
+                psd_cs = np.pad(psd_cs, ((1, 0), (1, 0)), mode='constant')
+            elif mode=='torch':
+                psd_cs = torch.nn.functional.pad(psd_cs, (1, 0, 1, 0), mode='constant', value=0)
+           
             # Compute the matrix of sums for all intervals
             sums = psd_cs[:,None,:,None] + psd_cs[None,:,None,:] - psd_cs[:,None,None,:] - psd_cs[None,:,:,None]
 
             # Compute the area of intervals
-            row_indices = np.arange(rows+1)[:, None]
-            col_indices = np.arange(cols+1)[None, :]
+            if mode=='np':
+                row_indices = np.arange(rows+1)[:, None]
+                col_indices = np.arange(cols+1)[None, :]
+            elif mode=='torch':
+                row_indices = torch.arange(rows + 1, device=self.device)[:, None]
+                col_indices = torch.arange(cols + 1, device=self.device)[None, :]
             area_1 = row_indices*col_indices
             area = area_1[:,None,:,None] + area_1[None,:,None,:] - area_1[:,None,None,:] - area_1[None,:,:,None]
 
             # Compute the LLRs
             means = sums/area
-            llrs = area*((means-1)-np.log(means))
-            llrs = np.nan_to_num(llrs, nan=0.0)
-            llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
-
-            s1 = [llrs_max_idx[0], llrs_max_idx[1]]
-            s2 = [llrs_max_idx[2], llrs_max_idx[3]]
-            self.S_ML = (slice(min(s1), max(s1)),slice(min(s2), max(s2)))
-            self.ll_max = llrs[llrs_max_idx]
+            if mode=='np':
+                llrs = area*((means-1)-np.log(means))
+                llrs = np.nan_to_num(llrs, nan=0.0)
+                llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
+                s1 = [llrs_max_idx[0], llrs_max_idx[1]]
+                s2 = [llrs_max_idx[2], llrs_max_idx[3]]
+                self.S_ML = (slice(min(s1), max(s1)),slice(min(s2), max(s2)))
+                self.ll_max = llrs[llrs_max_idx]
+            elif mode=='torch':
+                llrs = area * ((means - 1) - torch.log(means))
+                llrs = torch.nan_to_num(llrs, nan=0.0)
+                try:
+                    llrs_max_idx = torch.unravel_index(torch.argmax(llrs), llrs.shape)
+                except:
+                    llrs_max_idx = np.unravel_index(torch.argmax(llrs).cpu().numpy(), llrs.shape)
+                s1 = [llrs_max_idx[0].item(), llrs_max_idx[1].item()]
+                s2 = [llrs_max_idx[2].item(), llrs_max_idx[3].item()]
+                self.S_ML = (slice(min(s1), max(s1)), slice(min(s2), max(s2)))
+                self.ll_max = llrs[llrs_max_idx].item()
 
         # elif ndims==2:
 
@@ -267,12 +309,18 @@ class specsense_detection(object):
         return(self.S_ML, self.ll_max)
     
 
-    def compute_cumsum(self, X):
-        F = X.copy()
-        for axis in range(F.ndim):
-            F = np.cumsum(F, axis=axis)
+    def compute_cumsum(self, X, mode='np'):
+        if mode=='np':
+            F = X.copy()
+            for axis in range(F.ndim):
+                F = np.cumsum(F, axis=axis)
+        elif mode=='torch':
+            F = X.clone()
+            for axis in range(F.dim()):
+                F = torch.cumsum(F, dim=axis)
+        
         return F
-
+    
 
     def sweep_combs_psd(self, psd, S_ML):
         shape = np.shape(psd)
@@ -443,7 +491,7 @@ class specsense_detection(object):
             n_sigs = 0
             (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([10,10]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
 
-            (S_ML, ll_max) = self.ML_detector_efficient(psd)
+            (S_ML, ll_max) = self.ML_detector_efficient(psd, mode=self.ML_mode)
             ll_list.append(ll_max)
         
         ll_mean = np.mean(np.array(ll_list))
@@ -454,49 +502,55 @@ class specsense_detection(object):
         return optimal_thr
     
 
-    def sweep_snrs(self, snrs, n_sigs_min=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None):
+    def sweep_snrs(self, snrs, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None):
         print("Starting to sweep ML detector on SNRs...")
         
+        n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         det_rate = {}
         for snr in snrs:
             det_rate[snr] = 0.0
             for i in range(self.n_simulations):
-                print('Simulation #: {}, SNR: {}'.format(i+1, snr))
-                n_sigs = randint(n_sigs_min, n_sigs_max+1)
+                print('Simulation #: {}, SNR: {:0.3f}'.format(i+1, snr))
+                n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
+                # n_sigs = randint(n_sigs_min, n_sigs_max+1)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
-                (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr)
+                (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[snr] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
 
         return det_rate
 
     
-    def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, snr_range=np.array([10,10])):
+    def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, snr_range=np.array([10,10])):
         print("Starting to sweep ML detector on Signal sizes...")
         
+        n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         det_rate = {}
         for size in sizes:
             det_rate[size] = 0.0
             for i in range(self.n_simulations):
                 print('Simulation #: {}, Size: {}'.format(i+1, size))
-                n_sigs = randint(n_sigs_min, n_sigs_max+1)
+                n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
+                # n_sigs = randint(n_sigs_min, n_sigs_max+1)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=size, max_size=size, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
-                (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr)
+                (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[size] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
 
         return det_rate
 
 
-    def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None, snr_range=np.array([10,10]), mask_mode='binary'): 
-        print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, sig_size={}-{}, snrs={}-{}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, sig_size_min, sig_size_max, snr_range[0], snr_range[1]))
+    def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None, snr_range=np.array([10,10]), mask_mode='binary'): 
+        print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, n_sigs_p_dist:{}, sig_size={}-{}, snrs={:0.3f}-{:0.3f}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, n_sigs_p_dist, sig_size_min, sig_size_max, snr_range[0], snr_range[1]))
         
+        n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         data = []
         masks = []
         for _ in range(n_dataset):
-            n_sigs = randint(n_sigs_min, n_sigs_max+1)
+            n_sigs = np.random.choice(n_sigs_list, p=n_sigs_p_dist)
+            # n_sigs = randint(n_sigs_min, n_sigs_max+1)
             (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs_max, sig_size_min=sig_size_min, sig_size_max=sig_size_max, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode=mask_mode)
             data.append(psd)
             masks.append(mask)
@@ -507,40 +561,37 @@ class specsense_detection(object):
         print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}")
 
 
-    def gen_random_str(self, length=10):
+    def gen_random_str(self, length=6):
         letters = string.ascii_letters + string.digits
         return ''.join(random.choice(letters) for i in range(length))
 
 
-    def plot(self, plot_dic, snrs=None, sizes=None):
+    def plot(self, plot_dic):
         colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
         plt.figure()
         for i, plot_name in enumerate(plot_dic.keys()):
-            if plot_name=='snr_ML':
-                x = snrs.copy()
-                param_name = 'SNR'
-                method = 'Maximum Likelihood'
-            elif plot_name=='size_ML':
-                x = sizes.copy()
-                param_name = 'Interval Size'
-                method = 'Maximum Likelihood'
-            elif plot_name=='snr_NN':
-                x = snrs.copy()
-                param_name = 'SNR'
-                method = 'U-Net'
-            elif plot_name=='size_NN':
-                x = sizes.copy()
-                param_name = 'Interval Size'
-                method = 'U-Net'
-            det_err = 1-np.array(list(plot_dic[plot_name].values()))
+            x = [float(i) for i in plot_dic[plot_name].keys()]
 
+            if 'snr' in plot_name:
+                param_name = 'SNR'
+                file_name = 'ss_sw_snr'
+            elif 'size' in plot_name:
+                param_name = 'Interval Size'
+                file_name = 'ss_sw_size'
+
+            if 'ML' in plot_name:
+                method = 'Maximum Likelihood'
+            elif 'NN' in plot_name:
+                method = 'U-Net'
+
+            det_err = 1-np.array(list(plot_dic[plot_name].values()))
             plt.semilogx(x, det_err, 'o-', color=colors[i], label=method)
         
         plt.title('Detector Error Rate vs {}'.format(param_name))
         plt.xlabel('{} (Logarithmic)'.format(param_name))
         plt.ylabel('Error Rate')
         plt.legend()
-        plt.savefig(self.figs_dir + '{}.pdf'.format(param_name), format='pdf')
+        plt.savefig(self.figs_dir + '{}.pdf'.format(file_name), format='pdf')
         plt.show()
 
 

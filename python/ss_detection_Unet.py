@@ -209,7 +209,7 @@ class ss_detection_Unet(object):
     
     def __init__(self, params=None):
 
-        self.dataset_path = params.dataset_path
+        self.dataset_path = params.data_dir+params.dataset_name
         self.shape = params.shape
         self.n_sigs_max = params.n_sigs_max
         self.mask_mode = params.mask_mode
@@ -236,6 +236,7 @@ class ss_detection_Unet(object):
         self.train = params.train
         self.test = params.test
         self.load_model_params = params.load_model_params
+        self.random_str = params.random_str
         self.model_dir = params.model_dir
         self.model_name = params.model_name
         self.figs_dir = params.figs_dir
@@ -257,7 +258,7 @@ class ss_detection_Unet(object):
         print('Number of parameters in the model: {}'.format(self.count_parameters()))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print('device: {}'.format(self.device))
+        print('Unet device: {}'.format(self.device))
         
         self.model.to(self.device)
 
@@ -364,17 +365,19 @@ class ss_detection_Unet(object):
                     plt.savefig(self.figs_dir + 'NN_hist.pdf', format='pdf')
                     plt.show()
                     raise InterruptedError("Interrupted manually after plot.")
+        if len(data_loader)==0:
+            return 0.0
         score /= len(data_loader)
         mask_energy /= len(data_loader)
         if self.mask_mode=='snr':
             score = score/mask_energy
 
-        return(score)
+        return score
 
 
     def train_model(self):
         if self.train:
-            print("Starting to train the Neural Network...")
+            print("Beginning to train the Neural Network...")
             for epoch in range(self.n_epochs):
                 batch_id = 0
                 self.model.train()
@@ -396,8 +399,8 @@ class ss_detection_Unet(object):
                 print(f"Epoch {epoch + 1}/{self.n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {self.scheduler.get_last_lr()}\n")
                 
                 if (epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1:
-                    torch.save(self.model.state_dict(), self.model_dir+'model_weights_{}.pth'.format(epoch + 1))
-                    torch.save(self.model, self.model_dir+'model_{}.pth'.format(epoch + 1))
+                    torch.save(self.model.state_dict(), self.model_dir+self.random_str+'_weights_{}.pth'.format(epoch + 1))
+                    torch.save(self.model, self.model_dir+self.random_str+'_model_{}.pth'.format(epoch + 1))
                     print("Saved the Neural Network's model")
                     self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
                     print('Accuracy on test data: {}\n'.format(self.test_acc))
