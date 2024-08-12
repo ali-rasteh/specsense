@@ -20,9 +20,16 @@ class fir_separate(object):
         self.fil_bank_mode = params.fil_bank_mode
         self.fil_mode = params.fil_mode
         self.snr = params.snr
+        self.wl = params.wl
+        self.ant_dim = params.ant_dim
+        self.ant_dx = params.ant_dx
+        self.ant_dy = params.ant_dy
         self.cf_range = params.cf_range
         self.bw_range = params.bw_range
         self.psd_range = params.psd_range
+        self.az_range = params.az_range
+        self.el_range = params.el_range
+        self.aoa_mode = params.aoa_mode
         self.sig_noise = params.sig_noise
         self.ridge_coeff = params.ridge_coeff
         self.sig_sel_id = params.sig_sel_id
@@ -31,8 +38,13 @@ class fir_separate(object):
         self.plot_level = params.plot_level
         self.verbose_level = params.verbose_level
         self.rand_params = params.rand_params
+        self.plot_mean = params.plot_mean
         self.use_gpu = params.use_gpu
         self.gpu_id = params.gpu_id
+        self.fo_f_id = params.fo_f_id
+        self.snr_f_id = params.snr_f_id
+        self.N_sig_f_id = params.N_sig_f_id
+        self.N_r_f_id = params.N_r_f_id
         self.figs_dir = params.figs_dir
 
         self.sharp_order_pos = self.base_order_pos * (2 ** self.n_stage)
@@ -52,6 +64,7 @@ class fir_separate(object):
 
         self.basis_fil_ridge_real = None
         self.basis_fil_ridge_imag = None
+        self.aoa = None
 
         self.print('Initialized the fir_separate class instance.',2)
 
@@ -59,6 +72,20 @@ class fir_separate(object):
     def print(self, text='', thr=0):
         if self.verbose_level>=thr:
             print(text)
+
+
+    def plt_plot(self, *args, **kwargs):
+
+        args = list(args)
+
+        # Apply np.sqrt to the first two arguments
+        if len(args) > 0:
+            args[0] = self.numpy_transfer(args[0], dst='numpy')
+        if len(args) > 1:
+            args[1] = self.numpy_transfer(args[1], dst='numpy')
+
+        plt.plot(*args, **kwargs)
+        # plt.show()
 
 
     def check_cupy_gpu(self, gpu_id=0):
@@ -137,8 +164,6 @@ class fir_separate(object):
             # Transfer data to GPU
             a_gpu = np.asarray(a_cpu)
             b_gpu = np.asarray(b_cpu)
-            # a_gpu = cp.random.rand(size, size).astype(cp.float32)
-            # b_gpu = cp.random.rand(size, size).astype(cp.float32)
 
             # Measure GPU time
             start = time.time()
@@ -171,6 +196,49 @@ class fir_separate(object):
         return out
 
 
+    def lin_to_db(self, x, mode='pow'):
+        if mode=='pow':
+            return 10*np.log10(x)
+        elif mode=='mag':
+            return 20*np.log10(x)
+
+    def db_to_lin(self, x, mode='pow'):
+        if mode == 'pow':
+            return 10**(x/10)
+        elif mode == 'mag':
+            return 10**(x/20)
+
+
+    def gen_spatial_sig(self, ant_dim=1, N_sig=1, N_r=1, az_range=[-np.pi, np.pi], el_range=[-np.pi/2, np.pi/2], mode='uniform'):
+        if ant_dim == 1:
+            if mode=='uniform':
+                az = uniform(az_range[0], az_range[1], N_sig)
+            elif mode=='sweep':
+                az_range_t = az_range[1]-az_range[0]
+                az = np.linspace(az_range[0], az_range[1]-az_range_t/N_sig, N_sig)
+            spatial_sig = np.exp(
+                2 * np.pi * 1j * self.ant_dx / self.wl * np.arange(N_r).reshape((N_r, 1)) * np.sin(az.reshape((1, N_sig))))
+            return spatial_sig, [az]
+        elif ant_dim == 2:
+            spatial_sig = np.zeros((N_r, N_sig)).astype(complex)
+            if mode == 'uniform':
+                az = uniform(az_range[0], az_range[1], N_sig)
+                el = uniform(el_range[0], el_range[1], N_sig)
+            elif mode == 'sweep':
+                az_range_t = az_range[1] - az_range[0]
+                el_range_t = el_range[1] - el_range[0]
+                az = np.linspace(az_range[0], az_range[1]-az_range_t/N_sig, N_sig)
+                el = np.linspace(el_range[0], el_range[1]-el_range_t/N_sig, N_sig)
+            k = 2 * np.pi / self.wl
+            M = np.sqrt(N_r)
+            N = np.sqrt(N_r)
+            for i in range(N_sig):
+                ax = np.exp(1j * k * self.ant_dx * np.arange(M) * np.sin(el[i]) * np.cos(az[i]))
+                ay = np.exp(1j * k * self.ant_dy * np.arange(N) * np.sin(el[i]) * np.sin(az[i]))
+                spatial_sig[:, i] = np.kron(ax, ay)
+            return spatial_sig, [az,el]
+
+
     def gen_rand_params(self):
         self.print('Generating a set of random parameters.', 2)
 
@@ -179,52 +247,57 @@ class fir_separate(object):
             psd_range = self.psd_range/1e3/1e6
             sig_psd = uniform(psd_range[0], psd_range[1], self.N_sig)
             sig_cf = uniform(self.cf_range[0], self.cf_range[1], self.N_sig)
+
             # spatial_sig = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (self.N_r, self.N_sig))
-            spat_sig_mag = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (self.N_r, self.N_sig))
-            spat_sig_ang = uniform(0, 2 * np.pi, (self.N_r, self.N_sig))
-            spatial_sig = spat_sig_mag * np.cos(spat_sig_ang) + 1j * spat_sig_mag * np.sin(spat_sig_ang)
+            # spat_sig_mag = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (self.N_r, self.N_sig))
+            # spat_sig_ang = uniform(0, 2 * np.pi, (self.N_r, self.N_sig))
+            # spatial_sig = spat_sig_mag * np.cos(spat_sig_ang) + 1j * spat_sig_mag * np.sin(spat_sig_ang)
+
+            spat_sig_mag = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (1, self.N_sig))
+            spat_sig_mag = np.tile(spat_sig_mag, (self.N_r, 1))
+            spatial_sig, aoa = self.gen_spatial_sig(ant_dim=self.ant_dim, N_sig=self.N_sig, N_r=self.N_r, az_range=self.az_range, el_range=self.el_range, mode=self.aoa_mode)
+            spatial_sig = spat_sig_mag * spatial_sig
+
         else:
             self.N_sig = 8
             self.N_r = 4
-            sig_bw = np.array([22323529.99278623, 48200108.09963198, 36547482.82140353, 12584112.2088698,
-                               15527035.64753453, 46191498.35367701, 34587812.69753684, 38755537.21014])
-            sig_psd = np.array([1.23803258e-10 + 0.j, 1.90150973e-10 + 0.j, 1.30873743e-10 + 0.j,
-                                1.39155310e-10 + 0.j, 1.11357556e-10 + 0.j, 2.49922447e-10 + 0.j,
-                                1.95276336e-10 + 0.j, 9.26415974e-11 + 0.j])
-            sig_cf = np.array([ -9339579.67553654,  -7771172.84426754,  -3357446.53363527,
-                                24684146.71413184, -33177215.5784691,   34935824.59324883,
-                                -42989233.3315676,   28144876.63742255])
-            spatial_sig = np.array([[ 0.73816382+0.09205707j,  0.70387533+0.15183863j,  0.54803076-0.19402354j,
-                                      -0.58491791+0.5058128j,  -0.16193047+0.56388011j,  0.51477254-0.54550331j,
-                                      -0.33295462-0.64565756j, -0.03176378-0.47204342j],
-                                    [-0.04677747+0.13017887j,  0.63423703+0.13803569j, 0.25751322-0.62836306j,
-                                     -0.57574726-0.73478361j, -0.0835737 +0.14649245j,  0.87551691-0.10826231j,
-                                     -0.62712629+0.50051845j,  0.24537359-0.27019111j],
-                                    [ 0.04467297-0.18440435j, -0.06279467-0.54858543j, -0.04531414-0.19584594j,
-                                      0.13795275+0.1346313j,  -0.14161517-0.1081777j,  -0.06453969-0.09272613j,
-                                      0.47966132+0.2059196j,  -0.62141369+0.48982126j],
-                                    [ 0.21949995-0.67689595j,  0.68860328-0.56853604j,  0.62686718+0.25288625j,
-                                      -0.44005474-0.18483065j,  0.30352992+0.9416349j,   0.49304309+0.47657541j,
-                                      -0.72656496+0.09926177j,  0.23935423+0.35924608j]])
-
-            # self.N_sig = 2
-            # self.N_r = 1
-            # sig_bw = np.array([60e6, 2e6])
-            # sig_psd = (1/self.fs) * np.array([1, 4])
-            # sig_cf = np.array([0, 0])
-            # spatial_sig = np.array([[1., 1.]])
-
-            # self.N_sig = 5
-            # self.N_r = 1
-            # sig_bw = np.array([40e6, 2e6, 5e6, 6e6, 8e6])
-            # sig_psd = (1/self.fs) * np.array([1, 4, 2, 1, 2])
-            # sig_cf = np.array([1e6, 1e6, 10e6, 20e6, 50e6])
-            # spatial_sig = np.array([[1, 1, 1, 1, 1]])
+            sig_bw = np.array([23412323.42206957, 29720830.74807138, 28854411.42943605,
+                               13436699.17479161, 32625455.26622169, 32053137.51678639,
+                               35113044.93237082, 21712944.94126201])
+            sig_psd = np.array([1.82152663e-10+0.j, 2.18261433e-10+0.j, 2.10519428e-10+0.j,
+                               1.72903294e-10+0.j, 2.25096120e-10+0.j, 1.42163622e-10+0.j,
+                               1.16246992e-10+0.j, 1.26733169e-10+0.j])
+            sig_cf = np.array([ 76368431.6004079 ,  10009408.65004128, -17835240.41355851,
+                               -17457600.99681053, -11925292.61281498,  36570531.45445453,
+                                28089213.97482219,  36680162.41373056])
+            spatial_sig = np.array([[ 0.28560148+0.j        ,  0.49996994+0.j        ,
+                                     0.65436809+0.j        ,  0.77916855+0.j        ,
+                                     0.77740179+0.j        ,  0.72816271+0.j        ,
+                                     0.70354769+0.j        ,  0.79870358+0.j        ],
+                                   [ 0.28247656-0.04213306j,  0.23454661-0.44154029j,
+                                     0.38195112-0.5313294j ,  0.53913962+0.56252299j,
+                                     0.72772125+0.27345077j, -0.08719831-0.72292281j,
+                                     0.30553255-0.63374223j,  0.73871532+0.30368912j],
+                                   [ 0.21580258+0.18707605j,  0.3849812 +0.31899753j,
+                                     0.65124563-0.06384924j, -0.75863413-0.17770168j,
+                                     0.57519734-0.52297377j, -0.44911618-0.5731628j ,
+                                     0.3280136 -0.62240375j,  0.33967472+0.72287516j],
+                                   [ 0.24103957+0.1531931j ,  0.46232038-0.19034129j,
+                                     0.32828468-0.56606251j, -0.39663875-0.6706574j ,
+                                     0.72239466-0.28722724j, -0.51525611+0.51452121j,
+                                    -0.41820151-0.56576218j,  0.0393057 +0.79773584j]])
+            aoa = None
 
         sig_psd = sig_psd.astype(complex)
         spatial_sig = spatial_sig.astype(complex)
 
-        return (sig_bw, sig_psd, sig_cf, spatial_sig)
+        self.sig_bw = sig_bw
+        self.sig_psd = sig_psd
+        self.sig_cf = sig_cf
+        self.spatial_sig = spatial_sig
+        self.aoa = aoa
+
+        return (sig_bw, sig_psd, sig_cf, spatial_sig, aoa)
 
 
     def gen_noise(self, mode='complex'):
@@ -270,7 +343,7 @@ class fir_separate(object):
             plt.subplot(3, 1, 1)
             for i in range(self.N_sig):
                 spectrum = fftshift(fft(sigs[i, :]))
-                spectrum = 20 * np.log10(np.abs(spectrum))
+                spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
                 plt.plot(self.freq, spectrum, color=rand(3), linewidth=0.5)
             plt.title('Frequency spectrum of initial wideband signals')
             plt.xlabel('Frequency (Hz)')
@@ -278,7 +351,7 @@ class fir_separate(object):
 
             plt.subplot(3, 1, 2)
             spectrum = fftshift(fft(rx[self.rx_sel_id, :]))
-            spectrum = 20 * np.log10(np.abs(spectrum))
+            spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
             plt.plot(self.freq, spectrum, 'b-', linewidth=0.5)
             plt.title('Frequency spectrum of RX signal in a selected antenna')
             plt.xlabel('Frequency (Hz)')
@@ -286,26 +359,24 @@ class fir_separate(object):
 
             plt.subplot(3, 1, 3)
             spectrum = fftshift(fft(sigs[self.sig_sel_id, :]))
-            spectrum = 20 * np.log10(np.abs(spectrum))
+            spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
             plt.plot(self.freq, spectrum, 'r-', linewidth=0.5)
             plt.title('Frequency spectrum of the desired wideband signal')
             plt.xlabel('Frequency (Hz)')
             plt.ylabel('Magnitude (dB)')
 
-            plt.savefig(self.figs_dir + 'tx_rx_sigs.pdf', format='pdf')
+            plt.savefig(os.path.join(self.figs_dir, 'tx_rx_sigs.pdf'), format='pdf')
             # plt.show(block=False)
 
-        # frequencies, psd = welch(self.gen_noise(mode='complex'), self.fs, nperseg=1024)
-        # frequencies, psd = welch(sigs[0,:], self.fs, nperseg=1024)
-        # frequencies, psd = welch(rx[0,:], self.fs, nperseg=1024)
-        # plt.figure(figsize=(10, 6))
-        # plt.semilogy(frequencies, psd)
-        # plt.title('Power Spectral Density (PSD) of Signal')
-        # plt.xlabel('Frequency (Hz)')
-        # plt.ylabel(r'PSD ($V^2$/Hz)')
-        # plt.grid(True)
-        # plt.show()
-        # raise InterruptedError("Plot interrupt")
+            # frequencies, psd = welch(rx[0,:], self.fs, nperseg=1024)
+            # plt.figure(figsize=(10, 6))
+            # plt.semilogy(frequencies, psd)
+            # plt.title('Power Spectral Density (PSD) of Signal')
+            # plt.xlabel('Frequency (Hz)')
+            # plt.ylabel(r'PSD ($V^2$/Hz)')
+            # plt.grid(True)
+            # plt.show()
+            # raise InterruptedError("Plot interrupt")
 
         return (rx, sigs)
 
@@ -333,7 +404,7 @@ class fir_separate(object):
         if self.plot_level >= 3:
             # plt.figure()
             # w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=om)
-            # plt.plot(w / np.pi, 20 * np.log10(np.abs(h)), linewidth=1.0)
+            # plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
             # plt.title('Frequency response of the Wiener filter \n for the selected TX signal and RX antenna')
             # plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
             # plt.ylabel('Magnitude (dB)')
@@ -344,13 +415,43 @@ class fir_separate(object):
             for rx_id in range(self.N_r):
                 plt.subplot(self.N_r,1,rx_id+1)
                 w, h = freqz(self.fil_wiener_single[self.sig_sel_id][rx_id], worN=self.om)
-                plt.plot(w / np.pi, 20 * np.log10(np.abs(h)), linewidth=1.0)
+                plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
                 plt.title('Selected TX signal, and RX antenna {}'.format(rx_id+1))
                 if rx_id == 1:
                     plt.ylabel('Magnitude (dB)')
             plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
-            plt.savefig(self.figs_dir + 'wiener_filters.pdf', format='pdf')
+            plt.savefig(os.path.join(self.figs_dir, 'wiener_filters.pdf'), format='pdf')
             # plt.show(block=False)
+
+        # if self.plot_level>=1:
+        #     print('bw: ',self.sig_bw/1e6)
+        #     print('cf: ',self.sig_cf/1e6)
+        #     print('aoa: ',self.aoa)
+        #     f_len = len(self.freq)
+        #     S = np.zeros((self.N_sig, f_len))
+        #     for sig_id in range(self.N_sig):
+        #         h_simo = np.zeros((self.N_r, f_len), dtype=complex)
+        #         for rx_id in range(self.N_r):
+        #             w, h = freqz(self.fil_wiener_single[sig_id][rx_id], worN=self.om)
+        #             h_simo[rx_id,:] = h
+        #         # print(np.mean(np.abs(h_simo)))
+        #         # print(np.mean(np.abs(self.spatial_sig[:,sig_id])))
+        #         S[sig_id,:] = np.abs(np.dot(np.conj(self.spatial_sig[:,sig_id].T), h_simo))**2
+        #         # print(np.mean(np.abs(S[sig_id,:])))
+        #     # print(np.mean(np.abs(S), axis=1))
+        #     # print(np.abs(S))
+        #
+        #     S = self.lin_to_db(S)
+        #     plt.figure(figsize=(10, 6))
+        #     plt.imshow(S, aspect='auto',
+        #                # extent=[self.freq[0] / 1e6, self.freq[-1] / 1e6, self.aoa[0][-1], self.aoa[0][0]],
+        #                extent=[self.freq[0] / 1e6, self.freq[-1] / 1e6, -np.pi, np.pi],
+        #                cmap='viridis', interpolation='nearest')
+        #     plt.colorbar(label=r'Gain $|S(\theta,f)|^2$')
+        #     plt.xlabel('Frequency (MHz)')
+        #     plt.ylabel('Angle of Arrival (Rad)')
+        #     plt.title('Wiener Filter Response Heatmap')
+        #     plt.show()
 
         return self.fil_wiener_single
 
@@ -390,9 +491,6 @@ class fir_separate(object):
     def wiener_filter_param(self, sig_bw, sig_psd, sig_cf, spatial_sig):
         self.print('Beginning to design the optimal wiener filter using parameters.',2)
 
-        # N_sig = spatial_sig.shape[1]
-        # N_r = spatial_sig.shape[0]
-
         self.wiener_errs_param = np.zeros(self.N_sig)
         self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
 
@@ -410,7 +508,7 @@ class fir_separate(object):
         if self.plot_level >= 3:
             plt.figure()
             w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=self.om)
-            plt.plot(w / np.pi, 20 * np.log10(np.abs(h)), linewidth=1.0)
+            plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
             plt.title('Frequency response of the parametric Wiener filter \n for the selected TX signal and RX antenna')
             plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
             plt.ylabel('Magnitude (dB)')
@@ -419,10 +517,6 @@ class fir_separate(object):
 
     def basis_filter_design(self, rx, sigs, sig_bw, sig_cf):
         self.print('Beginning to design the optimal basis filters using the rx and desired signals data.',2)
-
-        # N_sig = sigs.shape[0]
-        # N_r = rx.shape[0]
-        # n_samples = sigs.shape[1]
 
         if self.fil_bank_mode == 1:
             self.fil_bank_num = int(self.fs / self.sharp_bw)
@@ -452,11 +546,11 @@ class fir_separate(object):
             for i in range(self.fil_bank_num):
                 if i % 1 == 0:
                     w, h = freqz(self.fil_bank[i], worN=self.om)
-                    plt.plot(w / np.pi, 20 * np.log10(np.abs(h)), label=f'Filter {i + 1}')
+                    plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), label=f'Filter {i + 1}')
             plt.title('Frequency response of basis filters in the filter bank')
             plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
             plt.ylabel('Magnitude (dB)')
-            plt.savefig(self.figs_dir + 'basis_filters.pdf', format='pdf')
+            plt.savefig(os.path.join(self.figs_dir, 'basis_filters.pdf'), format='pdf')
             # plt.legend()
             # plt.show(block=False)
 
@@ -499,12 +593,12 @@ class fir_separate(object):
             for i in range(self.fil_bank_num):
                 if i % 1 == 0:
                     spectrum = fftshift(fft(self.sig_bank[i][self.rx_sel_id]))
-                    spectrum = 20 * np.log10(np.abs(spectrum))
+                    spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
                     plt.plot(self.freq, spectrum, color=rand(3), linewidth=0.5)
             plt.title('Frequency spectrum of the signal bank filtered using the filter bank')
             plt.xlabel('Frequency (Hz)')
             plt.ylabel('Magnitude (dB)')
-            plt.savefig(self.figs_dir + 'signal_bank.pdf', format='pdf')
+            plt.savefig(os.path.join(self.figs_dir, 'signal_bank.pdf'), format='pdf')
             # plt.show(block=False)
 
         shift = self.filter_delay
@@ -572,7 +666,7 @@ class fir_separate(object):
                     plt.plot(freq_range, coeffs_ang, 'b-')
                     plt.xlabel('Basis Filter Center Frequency (Hz)')
                     plt.ylabel('Coefficient Angle (Rad)')
-                    plt.savefig(self.figs_dir + 'basis_coeffs.pdf', format='pdf')
+                    plt.savefig(os.path.join(self.figs_dir, 'basis_coeffs.pdf'), format='pdf')
                     # plt.show(block=False)
 
             sig_filtered_base_real = self.basis_fil_ridge_real[i].predict(sig_bank_mat_combined)
@@ -650,7 +744,7 @@ class fir_separate(object):
             plt.xlabel('S (number of stages)')
             plt.ylabel('Normalized delay relative to conventional filtering')
             plt.legend()
-            plt.savefig(self.figs_dir + 'filter_delay.pdf', format='pdf')
+            plt.savefig(os.path.join(self.figs_dir, 'filter_delay.pdf'), format='pdf')
             # plt.show()
 
             plt.figure()
@@ -663,32 +757,34 @@ class fir_separate(object):
             plt.xlabel('S (number of stages)')
             plt.ylabel('Normalized ops/s relative to conventional filtering')
             plt.legend()
-            plt.savefig(self.figs_dir + 'filter_ops.pdf', format='pdf')
+            plt.savefig(os.path.join(self.figs_dir, 'filter_ops.pdf'), format='pdf')
             # plt.show()
 
 
-    def plot(self, plot_dic):
+    def visualize_sweeps(self, plot_dic):
 
         if self.plot_level >= 1:
             colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
 
+            methods = ['basis', 'wiener']
             fil_orders = [int(i) for i in plot_dic.keys()]
             snrs = [float(i) for i in plot_dic[fil_orders[0]].keys()]
             N_sigs = [int(i) for i in plot_dic[fil_orders[0]][snrs[0]].keys()]
             N_rs = [int(i) for i in plot_dic[fil_orders[0]][snrs[0]][N_sigs[0]].keys()]
-            methods = ['basis', 'wiener']
-            fo_f = fil_orders[5] if len(fil_orders)>5 else fil_orders[0]
-            snr_f = snrs[5] if len(snrs)>5 else snrs[0]
-            N_sig_f = N_sigs[3] if len(N_sigs)>3 else N_sigs[0]
-            N_r_f = N_rs[3] if len(N_rs)>3 else N_rs[0]
 
             sweep_n_sig = len(N_sigs)>1
             sweep_snr = len(snrs)>1
             sweep_fo = len(fil_orders)>1
 
+            fo_f = fil_orders[self.fo_f_id] if sweep_fo else fil_orders[0]
+            snr_f = snrs[self.snr_f_id] if sweep_snr else snrs[0]
+            N_sig_f = N_sigs[self.N_sig_f_id] if sweep_n_sig else N_sigs[0]
+            N_r_f = N_rs[self.N_r_f_id] if sweep_n_sig else N_rs[0]
+
+
             if sweep_n_sig:
-                fig, axes = plt.subplots(1, 3, figsize=(15, 5), sharey=True)
-                for ax, N_sig in zip(axes, N_sigs[2:5]):
+                fig, axes = plt.subplots(1, len(N_sigs[1:5]), figsize=(len(N_sigs[1:5])*5, 5), sharey=True)
+                for ax, N_sig in zip(axes, N_sigs[1:5]):
                     x = N_rs
                     wiener_err = [plot_dic[fo_f][snr_f][N_sig][N_r]['wiener'] for N_r in N_rs]
                     basis_err = [plot_dic[fo_f][snr_f][N_sig][N_r]['basis'] for N_r in N_rs]
@@ -700,28 +796,30 @@ class fir_separate(object):
                     ax.set_ylabel('Normalized MSE (Logarithmic)')
                     ax.legend()
                     ax.grid(True)
-                fig.suptitle('Comparison of Wiener and basis filters error rate for different number of antennas and signals and filter order: {}, SNR: {}'.format(fo_f, snr_f))
-                plt.savefig(self.figs_dir + '{}.pdf'.format('filter_sw_nr_nsig'), format='pdf')
+                fig.suptitle('Comparison of Wiener and basis filters error rate for different number of antennas and signals and filter order: {}, SNR: {:0.1f} dB'.format(fo_f, self.lin_to_db(snr_f)))
+                plt.savefig(os.path.join(self.figs_dir, 'filter_sw_nr_nsig.pdf'), format='pdf')
                 # plt.show()
 
             if sweep_snr:
-                fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharey=True)
-                # for ax, fo in zip(axes, fil_orders[3:6]):
+                fig, axes = plt.subplots(1, len(fil_orders[0::2]), figsize=(len(fil_orders[0::2])*5, 6), sharey=True)
+                # for ax, fo in zip(axes, fil_orders[0::2]):
                 for ax, fo in zip([axes], [fo_f]):
-                    x = 10*np.log10(snrs)
+                    x = self.lin_to_db(snrs)
                     wiener_err = []
                     basis_err = []
                     for snr in snrs:
-                        wiener_err_t=[]
-                        basis_err_t=[]
-                        for N_r in N_rs:
-                            for N_sig in N_sigs:
-                                wiener_err_t.append(plot_dic[fo][snr][N_sig][N_r]['wiener'])
-                                basis_err_t.append(plot_dic[fo][snr][N_sig][N_r]['basis'])
-                        wiener_err.append(np.mean(wiener_err_t))
-                        basis_err.append(np.mean(basis_err_t))
-                    # wiener_err = [plot_dic[fo][snr][N_sig_f][N_r_f]['wiener'] for snr in snrs]
-                    # basis_err = [plot_dic[fo][snr][N_sig_f][N_r_f]['basis'] for snr in snrs]
+                        if self.plot_mean:
+                            wiener_err_t=[]
+                            basis_err_t=[]
+                            for N_r in N_rs:
+                                for N_sig in N_sigs:
+                                    wiener_err_t.append(plot_dic[fo][snr][N_sig][N_r]['wiener'])
+                                    basis_err_t.append(plot_dic[fo][snr][N_sig][N_r]['basis'])
+                            wiener_err.append(np.mean(wiener_err_t))
+                            basis_err.append(np.mean(basis_err_t))
+                        else:
+                            wiener_err.append(plot_dic[fo][snr][N_sig_f][N_r_f]['wiener'])
+                            basis_err.append(plot_dic[fo][snr][N_sig_f][N_r_f]['basis'])
                     ax.plot(x, wiener_err, label='Wiener', linestyle='-', marker='o', color='red')
                     ax.plot(x, basis_err, label='Basis', linestyle='-', marker='x', color='green')
                     plt.yscale('log')
@@ -730,44 +828,47 @@ class fir_separate(object):
                     ax.set_ylabel('Normalized MSE (Logarithmic)')
                     ax.legend()
                     ax.grid(True)
-                fig.suptitle(
-                    'Comparison of Wiener and basis filters error rate for different SNRs and filter orders and N_sig: {}, N_r: {}'.format(
-                        N_sig_f, N_r_f))
-                plt.savefig(self.figs_dir + '{}.pdf'.format('filter_sw_snr'), format='pdf')
+                if self.plot_mean:
+                    fig.suptitle('Comparison of Wiener and basis filters error rate for different SNRs and filter orders, averaging on N_sig, N_r')
+                else:
+                    fig.suptitle('Comparison of Wiener and basis filters error rate for different SNRs and filter orders and N_sig: {}, N_r: {}'.format(N_sig_f, N_r_f))
+                plt.savefig(os.path.join(self.figs_dir, 'filter_sw_snr.pdf'), format='pdf')
                 # plt.show()
 
             if sweep_fo:
-                fig, axes = plt.subplots(1, 1, figsize=(10, 6), sharey=True)
-                # for ax, snr in zip(axes, snrs[3:7]):
+                fig, axes = plt.subplots(1, len(snrs[0::2]), figsize=(len(snrs[0::2])*5, 6), sharey=True)
+                # for ax, snr in zip(axes, snrs[0::2]):
                 for ax, snr in zip([axes], [snr_f]):
                     x = fil_orders
                     wiener_err = []
                     basis_err = []
                     for fo in fil_orders:
-                        wiener_err_t = []
-                        basis_err_t = []
-                        for N_r in N_rs:
-                            for N_sig in N_sigs:
-                                wiener_err_t.append(plot_dic[fo][snr][N_sig][N_r]['wiener'])
-                                basis_err_t.append(plot_dic[fo][snr][N_sig][N_r]['basis'])
-                        wiener_err.append(np.mean(wiener_err_t))
-                        basis_err.append(np.mean(basis_err_t))
-                    # wiener_err = [plot_dic[fo][snr][N_sig_f][N_r_f]['wiener'] for fo in fil_orders]
-                    # basis_err = [plot_dic[fo][snr][N_sig_f][N_r_f]['basis'] for fo in fil_orders]
+                        if self.plot_mean:
+                            wiener_err_t = []
+                            basis_err_t = []
+                            for N_r in N_rs:
+                                for N_sig in N_sigs:
+                                    wiener_err_t.append(plot_dic[fo][snr][N_sig][N_r]['wiener'])
+                                    basis_err_t.append(plot_dic[fo][snr][N_sig][N_r]['basis'])
+                            wiener_err.append(np.mean(wiener_err_t))
+                            basis_err.append(np.mean(basis_err_t))
+                        else:
+                            wiener_err.append(plot_dic[fo][snr][N_sig_f][N_r_f]['wiener'])
+                            basis_err.append(plot_dic[fo][snr][N_sig_f][N_r_f]['basis'])
                     ax.semilogx(x, wiener_err, label='Wiener', linestyle='-', marker='o', color='red')
                     ax.semilogx(x, basis_err, label='Basis', linestyle='-', marker='x', color='green')
                     plt.yscale('log')
-                    ax.set_title('SNR = {:0.3f}'.format(snr))
+                    ax.set_title('SNR = {:0.1f} dB'.format(self.lin_to_db(snr)))
                     ax.set_xlabel('Base filter order (Logarithmic)')
                     ax.set_ylabel('Normalized MSE (Logarithmic)')
                     ax.legend()
                     ax.grid(True)
-                fig.suptitle(
-                    'Comparison of Wiener and basis filters error rate for different filter orders and SNRs and N_sig: {}, N_r: {}'.format(
-                        N_sig_f, N_r_f))
-                plt.savefig(self.figs_dir + '{}.pdf'.format('filter_sw_fo'), format='pdf')
+                if self.plot_mean:
+                    fig.suptitle('Comparison of Wiener and basis filters error rate for different filter orders and SNRs, averaging on N_sig, N_r')
+                else:
+                    fig.suptitle('Comparison of Wiener and basis filters error rate for different filter orders and SNRs and N_sig: {}, N_r: {}'.format(N_sig_f, N_r_f))
+                plt.savefig(os.path.join(self.figs_dir, 'filter_sw_fo.pdf'), format='pdf')
                 # plt.show()
-
 
 
 if __name__ == '__main__':

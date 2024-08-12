@@ -4,6 +4,7 @@ import numpy
 import matplotlib.pyplot as plt
 import argparse
 import time
+import os
 
 
 import_cupy=False
@@ -34,3 +35,4 @@ firwin = be_scp_sig.firwin
 lfilter = be_scp_sig.lfilter
 freqz = be_scp_sig.freqz
 welch = be_scp_sig.welch
+consts = be_scp.constants

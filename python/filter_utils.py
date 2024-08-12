@@ -24,6 +24,19 @@ class filter_utils(object):
             print(text)
 
 
+    def lin_to_db(self, x, mode='pow'):
+        if mode=='pow':
+            return 10*np.log10(x)
+        elif mode=='mag':
+            return 20*np.log10(x)
+
+    def db_to_lin(self, x, mode='pow'):
+        if mode == 'pow':
+            return 10**(x/10)
+        elif mode == 'mag':
+            return 10**(x/20)
+
+
     def upsample(self, signal, up=2):
         """
         Upsample a signal by a factor of 2 by inserting zeros between the original samples.
@@ -67,6 +80,7 @@ class filter_utils(object):
         # for i in range(filter_length):
         #     for j in range(filter_length):
         #         Rxx_1[i, j] = self.cross_correlation(input[0,:], input[0,:], i - j)
+        # print(np.sum(np.abs(Rxx - Rxx_1)))
 
         ryx = np.correlate(output[0,:], input[0,:], mode='same') / N_samples
         center = len(ryx) // 2
@@ -76,6 +90,7 @@ class filter_utils(object):
         # Ryx_1 = np.zeros((filter_length, 1)).astype(complex)
         # for j in range(filter_length):
         #     Ryx_1[j, 0] = self.cross_correlation(output[0,:], input[0,:], j - filter_order_neg)
+        # print(np.sum(np.abs(Ryx - Ryx_1)))
 
         wiener_filter_coef = np.linalg.solve(Rxx, Ryx)
 
@@ -146,6 +161,7 @@ class filter_utils(object):
         #         Rxx_1[i, j] = self.cross_correlation(input[idx_1, :], input[idx_2, :], corr_index)
         # end=time.time()
         # print('1: {}'.format(end-start))
+        # print(np.sum(np.abs(Rxx-Rxx_1)))
 
         # start = time.time()
         Ryx_t = np.zeros((N_out, N_in, filter_length)).astype(complex)
@@ -167,6 +183,7 @@ class filter_utils(object):
         #         Ryx_1[i, j] = self.cross_correlation(output[idx_1, :], input[idx_2, :], corr_index)
         # end = time.time()
         # print('2: {}'.format(end - start))
+        # print(np.sum(np.abs(Ryx - Ryx_1)))
 
         # self.print(f'Rxx determinant: {np.linalg.det(Rxx)}',4)
 
@@ -331,9 +348,9 @@ class filter_utils(object):
                 # Plotting the filter response and signal spectrums
                 plt.figure()
                 w, h = freqz(fil_base_shifted, worN=om)
-                plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Base Filter')
+                plt.plot(w/np.pi, self.lin_to_db(abs(h), mode='mag'), linewidth=1.0, label='Base Filter')
                 w, h = freqz(fil_us[0], worN=om)
-                plt.plot(w/np.pi, 20 * np.log10(abs(h)), linewidth=1.0, label='Upsampled Filter')
+                plt.plot(w/np.pi, self.lin_to_db(abs(h), mode='mag'), linewidth=1.0, label='Upsampled Filter')
                 plt.title('Base and Upsampled Filters Frequency Response')
                 plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
                 plt.ylabel('Magnitude (dB)')
@@ -346,14 +363,14 @@ class filter_utils(object):
                 for i, idx in enumerate(plot_indices):
                     plt.subplot(len(plot_indices) + 1, 1, i+1)
                     spectrum = np.fft.fftshift(np.fft.fft(sig_fil_us[idx]))
-                    plt.plot(freq, 20 * np.log10(np.abs(spectrum)), linewidth=1.0)
+                    plt.plot(freq, self.lin_to_db(np.abs(spectrum), mode='mag'), linewidth=1.0)
                     plt.title(f'Frequency Spectrum of the {idx} round filtered signal')
                     plt.xlabel('Frequency (Hz)')
                     plt.ylabel('Magnitude (dB)')
 
                 plt.subplot(len(plot_indices)+1, 1, len(plot_indices)+1)
                 spectrum = np.fft.fftshift(np.fft.fft(output))
-                plt.plot(freq, 20 * np.log10(np.abs(spectrum)), linewidth=1.0)
+                plt.plot(freq, self.lin_to_db(np.abs(spectrum), mode='mag'), linewidth=1.0)
                 plt.title('Frequency Spectrum of the output signal')
                 plt.xlabel('Frequency (Hz)')
                 plt.ylabel('Magnitude (dB)')
@@ -437,7 +454,7 @@ class filter_utils(object):
                         spectrum = np.fft.fftshift(np.fft.fft(sig_ds[iters - 1]))
                         index = iters
                         plt.title('Frequency spectrum of the last round downsampled filtered signal')
-                    spectrum = 20 * np.log10(np.abs(spectrum))
+                    spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
                     freq_ds = freq[::ds_rate**index]
                     plt.plot(freq_ds, spectrum, 'r-', linewidth=1.0)
                     plt.xlabel('Frequency (Hz)')
@@ -462,7 +479,7 @@ class filter_utils(object):
                         spectrum = np.fft.fftshift(np.fft.fft(sig_us_fil[iters - 1]))
                         index = iters
                         plt.title('Frequency spectrum of the last round filtered upsampled signal')
-                    spectrum = 20 * np.log10(np.abs(spectrum))
+                    spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
                     freq_us = freq[::us_rate ** (iters - index)]
                     plt.plot(freq_us, spectrum, 'r-', linewidth=1.0)
                     plt.xlabel('Frequency (Hz)')
