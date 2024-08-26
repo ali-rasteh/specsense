@@ -1,33 +1,27 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import firwin, lfilter, welch
-# from scipy.fftpack import fft, fftshift
-from numpy.fft import fft, fftshift
-from numpy.random import randn, rand
-from ss_detection import *
-from ss_detection_Unet import *
+from ss_detection import specsense_detection
+from ss_detection_Unet import ss_detection_Unet
 import argparse
 import os
-import sys
 
 
 
 class params_class(object):
     def __init__(self):
         
-        self.n_fft=128
+        self.n_fft=1024
         self.n_samples=128
-        self.shape=(self.n_fft, self.n_samples)
-        # self.shape=(self.n_fft,)
+        # self.shape=(self.n_fft, self.n_samples)
+        self.shape=(self.n_fft,)
 
-        self.sig_size_min=(1,1)
-        self.sig_size_max=(104,104)
-        self.sw_fixed_size=8
+        self.sig_size_min=(1,)
+        self.sig_size_max=(256,)
+        self.sw_fixed_size=16
         self.sw_sig_size_min=(1,1)
         self.sw_sig_size_max=(64,64)
         self.size_sam_mode='log'        # lin or log
         self.snr_min=0.5
-        self.snr_max=300
+        self.snr_max=100
         self.sw_fixed_snr=1.5
         self.sw_snr_min=0.5
         self.sw_snr_max=100.0
@@ -41,7 +35,7 @@ class params_class(object):
         self.sw_n_sigs_p_dist=None
         
         self.sweep_snr=True
-        self.sweep_size=True
+        self.sweep_size=False
         self.n_simulations=100
         self.sweep_steps=20
 
@@ -54,14 +48,14 @@ class params_class(object):
 
         self.lr=1e-2
         self.n_epochs=50
-        self.apply_pos_weight=False
-        self.mask_thr=0.0
-        self.draw_histogram=False
-        self.train=True
-        self.test=True
+        self.train=False
+        self.test=False
         self.load_model_params=False
         self.model_name='YrE2lW_weights_20.pth'
 
+        self.draw_histogram=False
+        self.mask_thr=0.0
+        self.apply_pos_weight=False
         self.noise_power=1.0
         self.ML_thr_coeff = 1.5
         self.ML_thr=self.ML_thr_coeff*10.0*self.noise_power
@@ -86,6 +80,8 @@ class params_class(object):
         self.logs_dir='./logs/'
         self.data_dir='./data/'
         self.dataset_name='psd_dataset.npz'
+
+
 
 
         self.snr_range = np.array([self.snr_min, self.snr_max]).astype(float)

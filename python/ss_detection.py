@@ -1,16 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import firwin, lfilter, freqz
-# from scipy.fftpack import fft, fftshift
-from numpy.fft import fft, fftshift
 from numpy.random import randn, rand, randint, choice, exponential, uniform
 from filter_utils import *
-import time
 import string
 import random
 import itertools
 from scipy.stats import chi2
 import torch
+import heapq
 
 
 
@@ -158,17 +155,17 @@ class specsense_detection(object):
 
         shape = np.shape(psd)
         ndims = len(shape)
-        self.ll_max = 0.0
-        self.S_ML = None
+        ll_max = 0.0
+        S_ML = None
 
         def sweep_psd(self, start_indices, end_indices):
             if len(start_indices) == ndims:
                 slices = tuple(slice(start, end) for start, end in zip(start_indices, end_indices))
                 subarray = psd[slices]
                 ll = self.likelihood(subarray)
-                if ll > self.ll_max:
-                    self.S_ML = slices
-                    self.ll_max = ll
+                if ll > ll_max:
+                    S_ML = slices
+                    ll_max = ll
                 return
 
             dim = len(start_indices)
@@ -177,17 +174,17 @@ class specsense_detection(object):
                     sweep_psd(self, start_indices=start_indices + [start], end_indices=end_indices + [end])
 
         sweep_psd(self, start_indices=[], end_indices=[])
-        if self.ll_max<thr:
-            self.ll_max = 0.0
-            self.S_ML = None
+        if ll_max<thr:
+            ll_max = 0.0
+            S_ML = None
 
-        return(self.S_ML, self.ll_max)
+        return(S_ML, ll_max)
 
 
     def ML_detector_efficient(self, psd, thr=0.0, mode='np'):
 
-        self.ll_max = 0.0
-        self.S_ML = None
+        ll_max = 0.0
+        S_ML = None
 
         if mode=='np':
             shape = np.shape(psd)
@@ -223,8 +220,8 @@ class specsense_detection(object):
                 llrs = lens*((means-1)-np.log(means))
                 llrs = np.nan_to_num(llrs, nan=0.0)
                 llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
-                self.S_ML = (slice(llrs_max_idx[1], llrs_max_idx[0]),)
-                self.ll_max = llrs[llrs_max_idx]
+                S_ML = (slice(llrs_max_idx[1], llrs_max_idx[0]),)
+                ll_max = llrs[llrs_max_idx]
             elif mode=='torch':
                 llrs = lens*((means-1)-torch.log(means))
                 llrs = torch.nan_to_num(llrs, nan=0.0)
@@ -232,8 +229,8 @@ class specsense_detection(object):
                     llrs_max_idx = torch.unravel_index(torch.argmax(llrs), llrs.shape)
                 except:
                     llrs_max_idx = np.unravel_index(torch.argmax(llrs).cpu().numpy(), llrs.shape)
-                self.S_ML = (slice(llrs_max_idx[1].item(), llrs_max_idx[0].item()),)
-                self.ll_max = llrs[llrs_max_idx].item()
+                S_ML = (slice(llrs_max_idx[1].item(), llrs_max_idx[0].item()),)
+                ll_max = llrs[llrs_max_idx].item()
 
         elif ndims==2:
             rows, cols = psd.shape
@@ -263,8 +260,8 @@ class specsense_detection(object):
                 llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
                 s1 = [llrs_max_idx[0], llrs_max_idx[1]]
                 s2 = [llrs_max_idx[2], llrs_max_idx[3]]
-                self.S_ML = (slice(min(s1), max(s1)),slice(min(s2), max(s2)))
-                self.ll_max = llrs[llrs_max_idx]
+                S_ML = (slice(min(s1), max(s1)),slice(min(s2), max(s2)))
+                ll_max = llrs[llrs_max_idx]
             elif mode=='torch':
                 llrs = area * ((means - 1) - torch.log(means))
                 llrs = torch.nan_to_num(llrs, nan=0.0)
@@ -274,8 +271,8 @@ class specsense_detection(object):
                     llrs_max_idx = np.unravel_index(torch.argmax(llrs).cpu().numpy(), llrs.shape)
                 s1 = [llrs_max_idx[0].item(), llrs_max_idx[1].item()]
                 s2 = [llrs_max_idx[2].item(), llrs_max_idx[3].item()]
-                self.S_ML = (slice(min(s1), max(s1)), slice(min(s2), max(s2)))
-                self.ll_max = llrs[llrs_max_idx].item()
+                S_ML = (slice(min(s1), max(s1)), slice(min(s2), max(s2)))
+                ll_max = llrs[llrs_max_idx].item()
 
         # elif ndims==2:
 
@@ -298,16 +295,63 @@ class specsense_detection(object):
         #                     mean = sum / area
         #                     llr = area*((mean-1)-np.log(mean))
                             
-        #                     if llr > self.ll_max:
-        #                         self.ll_max = llr
-        #                         self.S_ML = (i1, j1, i2, j2)
+        #                     if llr > ll_max:
+        #                         ll_max = llr
+        #                         S_ML = (i1, j1, i2, j2)
 
-        if self.ll_max<thr:
-            self.ll_max = 0.0
-            self.S_ML = None
+        if ll_max<thr:
+            ll_max = 0.0
+            S_ML = None
 
-        return(self.S_ML, self.ll_max)
+        return (S_ML, ll_max)
     
+
+    def ML_detector_binary_search(self, psd, adj_search=1, n_largest=3, thr=0.0, mode='np'):
+        ll_max = 0.0
+        S_ML = None
+        n_channels_max = 1
+        ll_list=[]
+
+        shape = psd.shape
+        ndims = len(shape)
+        if ndims==1:
+            n_fft = shape[0]
+            n_stage = int(np.round(np.log2(shape[0]))) + 1
+            for i in range(n_stage):
+                n_channels = 2 ** (i)
+                n_features = int(n_fft/n_channels)
+                lls=[]
+                for j in range(n_features):
+                    lls.append(self.likelihood(psd[j*n_channels:(j+1)*n_channels]))
+                if np.max(lls)>ll_max:
+                    ll_max = np.max(lls)
+                    S_ML = (slice(np.argmax(lls)*n_channels, (np.argmax(lls)+1)*n_channels),)
+                    n_channels_max = n_channels
+
+                largest_lls = heapq.nlargest(n_largest, lls)
+                ll_list = ll_list + [((slice(idx*n_channels, (idx+1)*n_channels),), ll, n_channels) for idx, ll in enumerate(lls) if ll in largest_lls]
+                
+            S_ML_list = [item[0] for item in ll_list]
+            ll_max_list = [item[1] for item in ll_list]
+            n_channels_list = [item[2] for item in ll_list]
+            largest_lls = heapq.nlargest(n_largest, ll_max_list)
+            ll_list = [(S_ML_list[idx],ll_max_list[idx],n_channels_list[idx]) for idx, ll in enumerate(ll_max_list) if ll in largest_lls]
+            
+
+            for (S_ML_c, ll_max_c, n_channels) in ll_list:
+                start = max(S_ML_c[0].start-adj_search*n_channels, 0)
+                stop = min(S_ML_c[0].stop+adj_search*n_channels, n_fft)
+                (S_ML_m, ll_max_m) = self.ML_detector_efficient(psd=psd[start:stop], thr=thr, mode=mode)
+                if (S_ML_m is not None) and ll_max_m>ll_max:
+                    S_ML = (slice(start + S_ML_m[0].start, start + S_ML_m[0].stop),)
+                    ll_max = ll_max_m
+
+        if ll_max<thr:
+            ll_max = 0.0
+            S_ML = None
+        return(S_ML, ll_max)
+
+
 
     def compute_cumsum(self, X, mode='np'):
         if mode=='np':
@@ -507,6 +551,7 @@ class specsense_detection(object):
         
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         det_rate = {}
+        cnt = 0
         for snr in snrs:
             det_rate[snr] = 0.0
             for i in range(self.n_simulations):
@@ -516,9 +561,17 @@ class specsense_detection(object):
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
                 (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
+                (S_ML_1, ll_max_1) = self.ML_detector_binary_search(psd, adj_search=1, thr=self.ML_thr, mode=self.ML_mode)
+                if S_ML_1 != S_ML or np.round(ll_max,3)!=np.round(ll_max_1,3):
+                    print((S_ML_1, S_ML))
+                    print((ll_max_1, ll_max))
+                    cnt += 1
+                    # raise ValueError("Binary search ML detector failed!")
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[snr] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
 
+        print("Binary search ML detector failed in {} cases!".format(cnt))
+        print("Binary search ML detector failed in {} percent!".format(cnt/(self.n_simulations*len(snrs))*100))
         return det_rate
 
     
