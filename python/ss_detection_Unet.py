@@ -12,17 +12,23 @@ import matplotlib.pyplot as plt
 
 class NumpyDataset(Dataset):
 
-    def __init__(self, dataset_path, data_transform=None, mask_transform=None, norm_mode_data='std', norm_mode_mask='std', mask_mode='binary'):
+    def __init__(self, dataset_path, mode='segmentation', norm_mode_data='std', norm_mode_mask='none', norm_mode_bbox='len', mask_mode='binary'):
         dataset = np.load(dataset_path)
 
         self.data = dataset['data']
         self.masks = dataset['masks']
+        self.bboxes = dataset['bboxes']
+        self.objectnesses = dataset['objectnesses']
+        self.classes = dataset['classes']
+
+        self.mode = mode
         self.norm_mode_data = norm_mode_data
         self.norm_mode_mask = norm_mode_mask
+        self.norm_mode_bbox = norm_mode_bbox
         self.mask_mode = mask_mode
 
-        self.data_transform = data_transform
-        self.mask_transform = mask_transform
+        # self.data_transform = data_transform
+        # self.mask_transform = mask_transform
 
         self.min_data = self.data.min()
         self.max_data = self.data.max()
@@ -32,6 +38,10 @@ class NumpyDataset(Dataset):
         self.max_masks = self.masks.max()
         self.mean_masks = self.masks.mean()
         self.std_masks = self.masks.std()
+        self.min_bboxes = self.bboxes.min()
+        self.max_bboxes = self.bboxes.max()
+        self.mean_bboxes = self.bboxes.mean()
+        self.std_bboxes = self.bboxes.std()
         
         if self.norm_mode_data=='max':
             self.data = (self.data - self.min_data) / (self.max_data - self.min_data)
@@ -52,6 +62,18 @@ class NumpyDataset(Dataset):
             self.masks = (self.masks - self.masks.mean()) / self.masks.std()
         elif self.norm_mode_mask=='none':
             pass
+        
+        if self.norm_mode_bbox=='max':
+            self.bboxes = (self.bboxes - self.min_bboxes) / (self.max_bboxes - self.min_bboxes)
+        elif self.norm_mode_bbox=='std':
+            self.bboxes = (self.bboxes - self.mean_bboxes) / self.std_bboxes
+        elif self.norm_mode_bbox=='max&std':
+            self.bboxes = (self.bboxes - self.min_bboxes) / (self.max_bboxes - self.min_bboxes)
+            self.bboxes = (self.bboxes - self.bboxes.mean()) / self.bboxes.std()
+        elif self.norm_mode_bbox=='len':
+            self.bboxes = self.bboxes/max(self.data.shape[1:])
+        elif self.norm_mode_bbox=='none':
+            pass
 
 
     def __len__(self):
@@ -65,19 +87,10 @@ class NumpyDataset(Dataset):
     
 
     def _transform(self, data, min=0, max=1, mean=0, std=1, norm_mode='std'):
-        
         if self.mask_mode=='channels':
             data_t = torch.tensor(data, dtype=torch.float32)
         else:
             data_t = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
-        
-        # if norm_mode=='max':
-        #     data_t = (data - min) / (max - min)
-        # elif norm_mode=='std':
-        #     data_t = (data - mean) / std
-        # elif norm_mode=='none':
-        #     data_t = data.copy()
-        # data_t = torch.tensor(data_t, dtype=torch.float32).unsqueeze(0)
 
         # if self.data_transform:
         #     data = self.data_transform(data)
@@ -90,10 +103,20 @@ class NumpyDataset(Dataset):
     def __getitem__(self, idx):
         data = self.data[idx]
         mask = self.masks[idx]
-        data = self._transform(data, min=self.min_data, max=self.max_data, mean=self.mean_data, std=self.std_data, norm_mode=self.norm_mode_data)
-        mask = self._transform(mask, min=self.min_masks, max=self.max_masks, mean=self.mean_masks, std=self.std_masks, norm_mode=self.norm_mode_mask)
+        data = self._transform(data)
+        mask = self._transform(mask)
+        
+        if self.mode=='segmentation':
+            return data, (mask,)
+        elif self.mode=='detection':
+            bbox = self.bboxes[idx]
+            objectness = self.objectnesses[idx]
+            classes = self.classes[idx]
+            bbox = self._transform(bbox)
+            objectness = self._transform(objectness)
+            classes = self._transform(classes)
+            return data, (bbox, objectness, classes)
 
-        return data, mask
 
 
 
@@ -115,12 +138,14 @@ class BinarizeSTE(torch.autograd.Function):
 
 
 class UNet1D(nn.Module):
-    def __init__(self, n_layers = 10, dim=1, n_out_channels=1):
+    def __init__(self, shape=(1024,), n_layers=10, dim=1, n_out_channels=1, n_classes=1, mode='segmentation'):
         super(UNet1D, self).__init__()
 
         self.n_layers = n_layers
         self.dim = dim
         self.n_out_channels = n_out_channels
+        self.mode = mode
+        self.n_classes = n_classes
 
         def Conv(in_channels=2, out_channels=1, kernel_size=1, padding=0):
             if self.dim == 1:
@@ -167,7 +192,7 @@ class UNet1D(nn.Module):
 
         self.pool = MaxPool(kernel_size=2)
 
-        self.middle = conv_block(in_channels=2**(i+1), out_channels=2**(i+2))
+        self.middle = conv_block(in_channels=2**(self.n_layers), out_channels=2**(self.n_layers+1))
 
         self.up = nn.ModuleList([])
         self.decoder = nn.ModuleList([])
@@ -177,6 +202,10 @@ class UNet1D(nn.Module):
 
         self.out_conv = Conv(in_channels=2, out_channels=self.n_out_channels, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
+
+        self.fc_bbox = nn.Linear(int(np.prod(shape)), 2*len(shape) * self.n_classes)
+        self.fc_obj = nn.Linear(int(np.prod(shape)), self.n_classes)
+        # self.fc_class = nn.Linear(int(np.prod(shape)), self.n_classes)
 
 
     def forward(self, x):
@@ -198,10 +227,81 @@ class UNet1D(nn.Module):
 
         output = self.out_conv(dec[-1])
         # output = self.sigmoid(self.out_conv(dec[-1]))
+        if self.mode=='segmentation':
+            return (output,)
         
-        return output
+        elif self.mode=='detection':
+            output_flat = torch.flatten(output, start_dim=2)
+            bboxes  = self.fc_bbox(output_flat)
+            objectnesses = self.fc_obj(output_flat)
+            # class_probs = self.fc_class(output_flat)
+            class_probs = None
+        
+            return (bboxes, objectnesses, class_probs)
 
 
+
+class ObjectDetectionLoss(nn.Module):
+    def __init__(self, shape=(1024,), lambda_start=20.0, lambda_length=2.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=1, eval_smooth=1e-9):
+        super(ObjectDetectionLoss, self).__init__()
+        self.shape = shape
+        self.n_sigs_max = n_sigs_max
+        self.eval_smooth = eval_smooth
+        self.lambda_start = lambda_start  # Weighting factor for the start of the bounding box
+        self.lambda_length = lambda_length  # Weighting factor for the length of the bounding box
+        self.lambda_obj = lambda_obj  # Weighting factor for the no object loss
+        self.lambda_class = lambda_class  # Weighting factor for the no object loss
+        
+        self.bbox_loss = nn.SmoothL1Loss()  # Smooth L1 loss for bounding box regression
+        self.objectness_loss = nn.BCEWithLogitsLoss()  # BCE loss for objectness
+        self.class_loss = nn.CrossEntropyLoss()  # Cross-entropy loss for class probabilities
+
+    def forward(self, pred, gt):
+        (pred_bbox, pred_objectness, pred_classes) = pred
+        (gt_bbox, gt_objectness, gt_classes) = gt
+
+        # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+        batch_size = pred_bbox.shape[0]
+        pred_bbox = pred_bbox.reshape((batch_size, self.n_sigs_max, -1))
+        gt_bbox = gt_bbox.reshape((batch_size, self.n_sigs_max, -1))
+
+        pred_starts = pred_bbox[:,:,:len(self.shape)]
+        pred_lengths = pred_bbox[:,:,len(self.shape):]
+        gt_starts = gt_bbox[:,:,:len(self.shape)]
+        gt_lengths = gt_bbox[:,:,len(self.shape):]
+        bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
+        bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
+
+        # pred_stops = pred_starts + pred_lengths
+        # gt_stops = gt_starts + gt_lengths
+
+        # intersection_start = torch.max(pred_starts, gt_starts)
+        # intersection_stop = torch.min(pred_stops, gt_stops)
+        # intersection = intersection_stop-intersection_start
+        # # intersection = torch.clamp(intersection, min=0.0, max=1.0)
+        # intersection_size = torch.prod(intersection, dim=-1)
+
+        # union_start = torch.min(pred_starts, gt_starts)
+        # union_stop = torch.max(pred_stops, gt_stops)
+        # union = union_stop-union_start
+        # # union = torch.clamp(union, min=0.0, max=1.0)
+        # union_size = torch.prod(union, dim=-1)
+
+        # iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
+        # bbox_loss = 1.0 - iou
+        
+        # Objectness loss
+        objectness_loss = self.objectness_loss(pred_objectness, gt_objectness)
+        
+        # Class probability loss
+        # class_loss = self.class_loss(pred_classes, gt_classes)
+        class_loss = 0
+        
+        # Total loss
+        total_loss = self.lambda_start * bbox_start_loss + self.lambda_length * bbox_length_loss + self.lambda_obj * objectness_loss + self.lambda_class * class_loss
+        
+        return total_loss
+    
 
 
 
@@ -220,9 +320,11 @@ class ss_detection_Unet(object):
         self.seed = params.seed
         self.batch_size = params.batch_size
         self.n_layers = params.n_layers
+        self.unet_mode = params.unet_mode
         self.lr = params.lr
         self.apply_pos_weight = params.apply_pos_weight
         self.mask_thr = params.mask_thr
+        self.gt_mask_thr = params.gt_mask_thr
         self.draw_histogram = params.draw_histogram
         self.hist_thr = params.hist_thr
         self.hist_bins = params.hist_bins
@@ -233,6 +335,7 @@ class ss_detection_Unet(object):
         self.nbatch_log = params.nbatch_log
         self.norm_mode_data = params.norm_mode_data
         self.norm_mode_mask = params.norm_mode_mask
+        self.norm_mode_bbox = params.norm_mode_bbox
         self.train = params.train
         self.test = params.test
         self.load_model_params = params.load_model_params
@@ -253,8 +356,11 @@ class ss_detection_Unet(object):
 
 
     def generate_model(self):
-        n_out_channels = self.n_sigs_max if self.mask_mode=='channels' else 1
-        self.model = UNet1D(n_layers=self.n_layers, dim=len(self.shape), n_out_channels=n_out_channels)
+        if self.mask_mode=='channels':
+            n_out_channels = self.n_sigs_max
+        else:
+            n_out_channels = 1
+        self.model = UNet1D(shape=self.shape, n_layers=self.n_layers, dim=len(self.shape), n_out_channels=n_out_channels, n_classes=self.n_sigs_max, mode=self.unet_mode)
         print('Number of parameters in the model: {}'.format(self.count_parameters()))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -283,8 +389,11 @@ class ss_detection_Unet(object):
                 print("Applied pos_weight to the loss function: {}".format(pos_weight))
             else:
                 pos_weight=None
-            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            # self.criterion = nn.BCELoss()
+            if self.unet_mode=='segmentation':
+                self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                # self.criterion = nn.BCELoss()
+            elif self.unet_mode=='detection':
+                self.criterion = ObjectDetectionLoss(shape=self.shape, lambda_start=20.0, lambda_length=2.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth)
         elif self.mask_mode=='snr':
             self.criterion = nn.MSELoss()
         
@@ -295,7 +404,7 @@ class ss_detection_Unet(object):
 
 
     def generate_data_loaders(self):
-        self.dataset = NumpyDataset(dataset_path=self.dataset_path, data_transform=self.data_transform, mask_transform=self.mask_transform, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, mask_mode=self.mask_mode)
+        self.dataset = NumpyDataset(dataset_path=self.dataset_path, mode=self.unet_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
         if self.apply_pos_weight:
             self.dataset_zeroone_ratio = self.dataset._get_masks_zeroone_ratio()
         else:
@@ -315,19 +424,67 @@ class ss_detection_Unet(object):
 
 
     def intersection_over_union(self, pred, target):
-        pred_c = pred > self.mask_thr
-        target_c = target > self.mask_thr
-        
-        intersection = (pred_c & target_c).float().sum()
-        union = (pred_c | target_c).float().sum()
-        
-        iou = (intersection + self.eval_smooth) / (union + self.eval_smooth)
-        return iou.mean().item()
+        if self.unet_mode=='segmentation':
+            pred_c = pred > self.mask_thr
+            target_c = target > self.gt_mask_thr
+            
+            intersection = (pred_c & target_c).float().sum()
+            union = (pred_c | target_c).float().sum()
+            
+            iou = (intersection + self.eval_smooth) / (union + self.eval_smooth)
+            iou = iou.mean().item()
+
+        elif self.unet_mode=='detection':
+            (pred_bbox, pred_objectness, pred_classes) = pred
+            (gt_bbox, gt_objectness, gt_classes) = target
+
+            pred_objectness = (pred_objectness > self.mask_thr).float()
+            gt_objectness = (gt_objectness > self.gt_mask_thr).float()
+
+            # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+            batch_size = pred_bbox.shape[0]
+            pred_bbox = pred_bbox.reshape((batch_size, self.n_sigs_max, -1))
+            gt_bbox = gt_bbox.reshape((batch_size, self.n_sigs_max, -1))
+            pred_objectness = pred_objectness.reshape((batch_size, self.n_sigs_max))
+            gt_objectness = gt_objectness.reshape((batch_size, self.n_sigs_max))
+
+            pred_bbox *= pred_objectness[:,:,None]
+            gt_bbox *= gt_objectness[:,:,None]
+            pred_bbox *= max(self.shape)
+            gt_bbox *= max(self.shape)
+            pred_bbox = pred_bbox.round().int()
+            gt_bbox = gt_bbox.round().int()
+
+            pred_starts = pred_bbox[:,:,:len(self.shape)]
+            pred_lengths = pred_bbox[:,:,len(self.shape):]
+            gt_starts = gt_bbox[:,:,:len(self.shape)]
+            gt_lengths = gt_bbox[:,:,len(self.shape):]
+            pred_stops = pred_starts + pred_lengths
+            gt_stops = gt_starts + gt_lengths
+
+            intersection_start = torch.max(pred_starts, gt_starts)
+            intersection_stop = torch.min(pred_stops, gt_stops)
+            intersection = intersection_stop-intersection_start
+            intersection = torch.clamp(intersection, min=0.0, max=1.0)
+            intersection = torch.prod(intersection, dim=-1)
+
+            union_start = torch.min(pred_starts, gt_starts)
+            union_stop = torch.max(pred_stops, gt_stops)
+            union = union_stop-union_start
+            # union = pred_lengths + gt_lengths - intersection
+            union = torch.clamp(union, min=0.0, max=1.0)
+            union = torch.prod(union, dim=-1)
+
+            iou = ((intersection+self.eval_smooth)/(union+self.eval_smooth))
+            iou = iou.mean().item()
+            # raise InterruptedError("Interrupted manually.")
+
+        return iou
 
 
     def dice_coefficient(self, pred, target):
         pred_c = pred > self.mask_thr
-        target_c = target > self.mask_thr
+        target_c = target > self.gt_mask_thr
         
         intersection = (pred_c & target_c).float().sum()
         dice = (2. * intersection + self.eval_smooth) / (pred_c.float().sum() + target_c.float().sum() + self.eval_smooth)
@@ -335,22 +492,28 @@ class ss_detection_Unet(object):
         return dice.mean().item()
 
 
-    def evaluate_model(self, model, device, data_loader):
+    def evaluate_model(self, model, data_loader):
         model.eval()
         score = 0
         mask_energy = 0
         print("Dataloader length: {}".format(len(data_loader)))
         with torch.no_grad():
-            for data, mask in data_loader:
-                data = data.to(device)
-                mask = mask.to(device)
+            for data, gt in data_loader:
+                data = data.to(self.device)
+                gt = tuple(gt[i].to(self.device) for i in range(len(gt)))
+                if len(gt)==1:
+                    gt = gt[0]
                 output = model(data)
-                if self.mask_mode=='binary' or self.mask_mode=='channels':
-                    score += self.intersection_over_union(output, mask)
-                elif self.mask_mode=='snr':
-                    score += F.mse_loss(output, mask).item()
-                    # score += ((mask.cpu().numpy()-output.cpu().numpy())**2).mean()
-                    mask_energy += torch.mean(mask**2).item()
+                if len(output)==1:
+                    output = output[0]
+                if self.unet_mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels'):
+                    score += self.intersection_over_union(output, gt)
+                elif self.unet_mode=='segmentation' and self.mask_mode=='snr':
+                    score += F.mse_loss(output, gt).item()
+                    # score += ((gt.cpu().numpy()-output.cpu().numpy())**2).mean()
+                    mask_energy += torch.mean(gt**2).item()
+                elif self.unet_mode=='detection':
+                    score += self.intersection_over_union(output, gt)
                 if self.draw_histogram:
                     plt.figure(figsize=(10, 6))
                     output_h=output.clone()
@@ -382,13 +545,17 @@ class ss_detection_Unet(object):
                 batch_id = 0
                 self.model.train()
                 epoch_loss = 0
-                for data, mask in self.train_loader:
+                for data, gt in self.train_loader:
                     data = data.to(self.device)
-                    mask = mask.to(self.device)
+                    gt = tuple(gt[i].to(self.device) for i in range(len(gt)))
+                    if len(gt)==1:
+                        gt = gt[0]
                     self.optimizer.zero_grad()
                     output = self.model(data)
+                    if len(output)==1:
+                        output = output[0]
                     # output = BinarizeSTE.apply(output, self.mask_thr)
-                    loss = self.criterion(output, mask)
+                    loss = self.criterion(output, gt)
                     loss.backward()
                     self.optimizer.step()
                     epoch_loss += loss.item()
@@ -402,7 +569,7 @@ class ss_detection_Unet(object):
                     torch.save(self.model.state_dict(), self.model_dir+self.random_str+'_weights_{}.pth'.format(epoch + 1))
                     torch.save(self.model, self.model_dir+self.random_str+'_model_{}.pth'.format(epoch + 1))
                     print("Saved the Neural Network's model")
-                    self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
+                    self.test_acc = self.evaluate_model(self.model, self.test_loader)
                     print('Accuracy on test data: {}\n'.format(self.test_acc))
 
                 self.scheduler.step()
@@ -412,10 +579,10 @@ class ss_detection_Unet(object):
         if self.test:
             print("Starting to test the Neural Network...")
 
-            self.train_acc = self.evaluate_model(self.model, self.device, self.train_loader)
+            self.train_acc = self.evaluate_model(self.model, self.train_loader)
             print('Accuracy on train data: {}'.format(self.train_acc))
 
-            self.test_acc = self.evaluate_model(self.model, self.device, self.test_loader)
+            self.test_acc = self.evaluate_model(self.model, self.test_loader)
             print('Accuracy on test data: {}\n'.format(self.test_acc))
 
 

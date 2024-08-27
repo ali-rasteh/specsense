@@ -22,6 +22,8 @@ class specsense_detection(object):
         self.ML_thr = params.ML_thr
         self.ML_mode = params.ML_mode
         self.figs_dir = params.figs_dir
+        self.n_adj_search = params.n_adj_search
+        self.n_largest = params.n_largest
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print('specsense_detection device: {}'.format(self.device))
@@ -306,7 +308,7 @@ class specsense_detection(object):
         return (S_ML, ll_max)
     
 
-    def ML_detector_binary_search(self, psd, adj_search=1, n_largest=3, thr=0.0, mode='np'):
+    def ML_detector_binary_search(self, psd, n_adj_search=1, n_largest=3, thr=0.0, mode='np'):
         ll_max = 0.0
         S_ML = None
         n_channels_max = 1
@@ -339,8 +341,8 @@ class specsense_detection(object):
             
 
             for (S_ML_c, ll_max_c, n_channels) in ll_list:
-                start = max(S_ML_c[0].start-adj_search*n_channels, 0)
-                stop = min(S_ML_c[0].stop+adj_search*n_channels, n_fft)
+                start = max(S_ML_c[0].start-n_adj_search*n_channels, 0)
+                stop = min(S_ML_c[0].stop+n_adj_search*n_channels, n_fft)
                 (S_ML_m, ll_max_m) = self.ML_detector_efficient(psd=psd[start:stop], thr=thr, mode=mode)
                 if (S_ML_m is not None) and ll_max_m>ll_max:
                     S_ML = (slice(start + S_ML_m[0].start, start + S_ML_m[0].stop),)
@@ -546,7 +548,7 @@ class specsense_detection(object):
         return optimal_thr
     
 
-    def sweep_snrs(self, snrs, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None):
+    def sweep_snrs(self, snrs, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None, mode='simple'):
         print("Starting to sweep ML detector on SNRs...")
         
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
@@ -560,22 +562,23 @@ class specsense_detection(object):
                 # n_sigs = randint(n_sigs_min, n_sigs_max+1)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
-                (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
-                (S_ML_1, ll_max_1) = self.ML_detector_binary_search(psd, adj_search=1, thr=self.ML_thr, mode=self.ML_mode)
-                if S_ML_1 != S_ML or np.round(ll_max,3)!=np.round(ll_max_1,3):
-                    print((S_ML_1, S_ML))
-                    print((ll_max_1, ll_max))
-                    cnt += 1
-                    # raise ValueError("Binary search ML detector failed!")
+                if mode=='simple':
+                    (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
+                elif mode=='binary':
+                    (S_ML, ll_max) = self.ML_detector_binary_search(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
+                # if S_ML_1 != S_ML or np.round(ll_max,3)!=np.round(ll_max_1,3):
+                #     print((S_ML_1, S_ML))
+                #     print((ll_max_1, ll_max))
+                #     cnt += 1
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[snr] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
 
-        print("Binary search ML detector failed in {} cases!".format(cnt))
-        print("Binary search ML detector failed in {} percent!".format(cnt/(self.n_simulations*len(snrs))*100))
+        # print("Binary search ML detector failed in {} cases!".format(cnt))
+        # print("Binary search ML detector failed in {} percent!".format(cnt/(self.n_simulations*len(snrs))*100))
         return det_rate
 
     
-    def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, snr_range=np.array([10,10])):
+    def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, snr_range=np.array([10,10]), mode='simple'):
         print("Starting to sweep ML detector on Signal sizes...")
         
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
@@ -588,7 +591,10 @@ class specsense_detection(object):
                 # n_sigs = randint(n_sigs_min, n_sigs_max+1)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=size, max_size=size, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
-                (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
+                if mode=='simple':
+                    (S_ML, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
+                elif mode=='binary':
+                    (S_ML, ll_max) = self.ML_detector_binary_search(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
                 region_gt = regions[0] if len(regions)>0 else None
                 det_rate[size] += self.compute_slices_similarity(S_ML, region_gt)/self.n_simulations
 
@@ -601,15 +607,31 @@ class specsense_detection(object):
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         data = []
         masks = []
+        bboxes = []
+        objectnesses = []
+        classes = []
         for _ in range(n_dataset):
             n_sigs = np.random.choice(n_sigs_list, p=n_sigs_p_dist)
             # n_sigs = randint(n_sigs_min, n_sigs_max+1)
-            (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs_max, sig_size_min=sig_size_min, sig_size_max=sig_size_max, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode=mask_mode)
+            regions = self.generate_random_regions(shape=shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
+            (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=regions, n_sigs=n_sigs, n_sigs_max=n_sigs_max, sig_size_min=sig_size_min, sig_size_max=sig_size_max, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode=mask_mode)
             data.append(psd)
             masks.append(mask)
+            bbox = np.zeros((n_sigs_max, 2*len(shape)), dtype=float)
+            for i, region in enumerate(regions):
+                bbox[i] = np.array([slice_.start for slice_ in region] + [slice_.stop-slice_.start for slice_ in region])
+            bbox = bbox.flatten()
+            bboxes.append(bbox)
+            objectness = np.array([1.0]*n_sigs + [0.0]*(n_sigs_max-n_sigs), dtype=float)
+            objectnesses.append(objectness)
+            class_ = np.array([0.0]*n_sigs_max, dtype=float)
+            classes.append(class_)
         data = np.array(data)
         masks = np.array(masks)
-        np.savez(dataset_path, data=data, masks=masks)
+        bboxes = np.array(bboxes)
+        objectnesses = np.array(objectnesses)
+        classes = np.array(classes)
+        np.savez(dataset_path, data=data, masks=masks, bboxes=bboxes, objectnesses=objectnesses, classes=classes)
         
         print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}")
 
@@ -620,20 +642,25 @@ class specsense_detection(object):
 
 
     def plot(self, plot_dic):
+        print(plot_dic)
         colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
         plt.figure()
-        for i, plot_name in enumerate(plot_dic.keys()):
-            x = [float(i) for i in plot_dic[plot_name].keys()]
+        for i, plot_name in enumerate(list(plot_dic.keys())):
 
             if 'snr' in plot_name:
+                x = [float(i) for i in list(plot_dic[plot_name].keys())]
                 param_name = 'SNR'
                 file_name = 'ss_sw_snr'
             elif 'size' in plot_name:
+                x = [float(item[0]) for item in list(plot_dic[plot_name].keys())]
                 param_name = 'Interval Size'
                 file_name = 'ss_sw_size'
 
             if 'ML' in plot_name:
-                method = 'Maximum Likelihood'
+                if 'binary' in plot_name:
+                    method = 'Maximum Likelihood Binary Search'
+                else:
+                    method = 'Maximum Likelihood'
             elif 'NN' in plot_name:
                 method = 'U-Net'
 

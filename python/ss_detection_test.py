@@ -16,13 +16,13 @@ class params_class(object):
 
         self.sig_size_min=(1,)
         self.sig_size_max=(256,)
-        self.sw_fixed_size=16
-        self.sw_sig_size_min=(1,1)
-        self.sw_sig_size_max=(64,64)
+        self.sw_fixed_size=20
+        self.sw_sig_size_min=(1,)
+        self.sw_sig_size_max=(256,)
         self.size_sam_mode='log'        # lin or log
         self.snr_min=0.5
         self.snr_max=100
-        self.sw_fixed_snr=1.5
+        self.sw_fixed_snr=5.0
         self.sw_snr_min=0.5
         self.sw_snr_max=100.0
         self.snr_sam_mode='log'        # lin or log
@@ -35,9 +35,11 @@ class params_class(object):
         self.sw_n_sigs_p_dist=None
         
         self.sweep_snr=True
-        self.sweep_size=False
+        self.sweep_size=True
         self.n_simulations=100
         self.sweep_steps=20
+        self.n_adj_search=1
+        self.n_largest=3
 
         self.n_dataset=200000
         self.generate_dataset=True
@@ -45,16 +47,19 @@ class params_class(object):
         self.mask_mode='binary'        # binary or snr or channels
         self.norm_mode_data='std'        # max or std or max&std or none
         self.norm_mode_mask='none'        # max or std or max&std or none
+        self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
         self.lr=1e-2
         self.n_epochs=50
-        self.train=False
-        self.test=False
+        self.train=True
+        self.test=True
         self.load_model_params=False
         self.model_name='YrE2lW_weights_20.pth'
+        self.unet_mode = 'detection'     # segmentation or detection
 
         self.draw_histogram=False
         self.mask_thr=0.0
+        self.gt_mask_thr=0.5
         self.apply_pos_weight=False
         self.noise_power=1.0
         self.ML_thr_coeff = 1.5
@@ -183,14 +188,22 @@ if __name__ == '__main__':
 
     if params.sweep_snr:
         params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)
-        det_rate = ss_det.sweep_snrs(snrs=params.sw_snrs, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, sig_size_min=params.fixed_size, sig_size_max=params.fixed_size)
+        det_rate = ss_det.sweep_snrs(snrs=params.sw_snrs, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, sig_size_min=params.fixed_size, sig_size_max=params.fixed_size, mode='simple')
         print("ML detection rate for SNRs: {}\n".format(det_rate))
         det_rate_snrs['snr_ML'] = det_rate.copy()
 
+        det_rate = ss_det.sweep_snrs(snrs=params.sw_snrs, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, sig_size_min=params.fixed_size, sig_size_max=params.fixed_size, mode='binary')
+        print("ML-binary search detection rate for SNRs: {}\n".format(det_rate))
+        det_rate_snrs['snr_ML_binary_search'] = det_rate.copy()
+
     if params.sweep_size:
-        det_rate = ss_det.sweep_sizes(sizes=params.sw_sizes, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, snr_range=params.fixed_snr_range)
+        det_rate = ss_det.sweep_sizes(sizes=params.sw_sizes, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, snr_range=params.fixed_snr_range, mode='simple')
         print("ML detection rate for signal sizes: {}\n".format(det_rate))
         det_rate_sizes['size_ML'] = det_rate.copy()
+
+        det_rate = ss_det.sweep_sizes(sizes=params.sw_sizes, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, snr_range=params.fixed_snr_range, mode='binary')
+        print("ML-binary search detection rate for signal sizes: {}\n".format(det_rate))
+        det_rate_sizes['size_ML_binary_search'] = det_rate.copy()
 
 
     # det_rate_snrs['snr_NN'] = {0.5: 0.00013185336267108132, 0.6608103647168022: 0.0015672112395619337, 0.8733406762343062: 0.013371356799185668, 1.1542251415688212: 0.07687240992168713, 1.5254478735307908: 0.24722358791431434, 2.0160635313287045: 0.4892272824520826, 2.6644713548591303: 0.685144745282865, 3.5214205755638686: 0.8048406510052658, 4.653982429719222: 0.8767833832007426, 6.150799653536695: 0.9207975303991931, 8.129024324707132: 0.9500897710658429, 10.74348705760295: 0.9673707998434445, 14.198815201729696: 0.9787792107978044, 18.765448504002958: 0.9866002537129577, 24.800805740009125: 0.9914856492413843, 32.77725897265199: 0.9949680512864293, 43.319104912270475: 0.9971241964469626, 57.25142703256576: 0.9982189919336162, 75.66467275589427: 0.9988371361053048, 100.0: 0.9989291927348432}
