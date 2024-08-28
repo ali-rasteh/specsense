@@ -205,7 +205,7 @@ class UNet1D(nn.Module):
 
         self.fc_bbox = nn.Linear(int(np.prod(shape)), 2*len(shape) * self.n_classes)
         self.fc_obj = nn.Linear(int(np.prod(shape)), self.n_classes)
-        # self.fc_class = nn.Linear(int(np.prod(shape)), self.n_classes)
+        self.fc_class = nn.Linear(int(np.prod(shape)), self.n_classes)
 
 
     def forward(self, x):
@@ -242,11 +242,13 @@ class UNet1D(nn.Module):
 
 
 class ObjectDetectionLoss(nn.Module):
-    def __init__(self, shape=(1024,), lambda_start=20.0, lambda_length=2.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=1, eval_smooth=1e-9):
+    def __init__(self, shape=(1024,), lambda_start=1.0, lambda_length=1.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=1, eval_smooth=1e-6, mask_thr=0.0, gt_mask_thr=0.5):
         super(ObjectDetectionLoss, self).__init__()
         self.shape = shape
         self.n_sigs_max = n_sigs_max
         self.eval_smooth = eval_smooth
+        self.mask_thr = mask_thr
+        self.gt_mask_thr = gt_mask_thr
         self.lambda_start = lambda_start  # Weighting factor for the start of the bounding box
         self.lambda_length = lambda_length  # Weighting factor for the length of the bounding box
         self.lambda_obj = lambda_obj  # Weighting factor for the no object loss
@@ -260,20 +262,32 @@ class ObjectDetectionLoss(nn.Module):
         (pred_bbox, pred_objectness, pred_classes) = pred
         (gt_bbox, gt_objectness, gt_classes) = gt
 
-        # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+        # Objectness loss
+        objectness_loss = self.objectness_loss(pred_objectness, gt_objectness)
+
+        # Class probability loss
+        # class_loss = self.class_loss(pred_classes, gt_classes)
+        class_loss = 0
+
+
+        pred_objectness = (pred_objectness > self.mask_thr).float()
+        # pred_objectness = torch.sigmoid(pred_objectness)
+        
         batch_size = pred_bbox.shape[0]
         pred_bbox = pred_bbox.reshape((batch_size, self.n_sigs_max, -1))
         gt_bbox = gt_bbox.reshape((batch_size, self.n_sigs_max, -1))
+        pred_objectness = pred_objectness.reshape((batch_size, self.n_sigs_max))
+        gt_objectness = gt_objectness.reshape((batch_size, self.n_sigs_max))
+
+        pred_bbox *= pred_objectness[:,:,None]
+        gt_bbox *= gt_objectness[:,:,None]
 
         pred_starts = pred_bbox[:,:,:len(self.shape)]
         pred_lengths = pred_bbox[:,:,len(self.shape):]
         gt_starts = gt_bbox[:,:,:len(self.shape)]
         gt_lengths = gt_bbox[:,:,len(self.shape):]
-        bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
-        bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
-
-        # pred_stops = pred_starts + pred_lengths
-        # gt_stops = gt_starts + gt_lengths
+        pred_stops = pred_starts + pred_lengths
+        gt_stops = gt_starts + gt_lengths
 
         # intersection_start = torch.max(pred_starts, gt_starts)
         # intersection_stop = torch.min(pred_stops, gt_stops)
@@ -288,14 +302,14 @@ class ObjectDetectionLoss(nn.Module):
         # union_size = torch.prod(union, dim=-1)
 
         # iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
-        # bbox_loss = 1.0 - iou
-        
-        # Objectness loss
-        objectness_loss = self.objectness_loss(pred_objectness, gt_objectness)
-        
-        # Class probability loss
-        # class_loss = self.class_loss(pred_classes, gt_classes)
-        class_loss = 0
+        # # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
+        # bbox_start_loss = -iou
+        # bbox_length_loss = 0.0
+
+        # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
+        # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+        bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
+        bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
         
         # Total loss
         total_loss = self.lambda_start * bbox_start_loss + self.lambda_length * bbox_length_loss + self.lambda_obj * objectness_loss + self.lambda_class * class_loss
@@ -336,6 +350,10 @@ class ss_detection_Unet(object):
         self.norm_mode_data = params.norm_mode_data
         self.norm_mode_mask = params.norm_mode_mask
         self.norm_mode_bbox = params.norm_mode_bbox
+        self.lambda_start=params.lambda_start
+        self.lambda_length=params.lambda_length
+        self.lambda_obj=params.lambda_obj
+        self.lambda_class=params.lambda_class
         self.train = params.train
         self.test = params.test
         self.load_model_params = params.load_model_params
@@ -393,7 +411,7 @@ class ss_detection_Unet(object):
                 self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
                 # self.criterion = nn.BCELoss()
             elif self.unet_mode=='detection':
-                self.criterion = ObjectDetectionLoss(shape=self.shape, lambda_start=20.0, lambda_length=2.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth)
+                self.criterion = ObjectDetectionLoss(shape=self.shape, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
         elif self.mask_mode=='snr':
             self.criterion = nn.MSELoss()
         
@@ -439,9 +457,8 @@ class ss_detection_Unet(object):
             (gt_bbox, gt_objectness, gt_classes) = target
 
             pred_objectness = (pred_objectness > self.mask_thr).float()
-            gt_objectness = (gt_objectness > self.gt_mask_thr).float()
+            # gt_objectness = (gt_objectness > self.gt_mask_thr).float()
 
-            # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
             batch_size = pred_bbox.shape[0]
             pred_bbox = pred_bbox.reshape((batch_size, self.n_sigs_max, -1))
             gt_bbox = gt_bbox.reshape((batch_size, self.n_sigs_max, -1))
@@ -465,14 +482,14 @@ class ss_detection_Unet(object):
             intersection_start = torch.max(pred_starts, gt_starts)
             intersection_stop = torch.min(pred_stops, gt_stops)
             intersection = intersection_stop-intersection_start
-            intersection = torch.clamp(intersection, min=0.0, max=1.0)
+            intersection = torch.clamp(intersection, min=0, max=max(self.shape))
             intersection = torch.prod(intersection, dim=-1)
 
             union_start = torch.min(pred_starts, gt_starts)
             union_stop = torch.max(pred_stops, gt_stops)
             union = union_stop-union_start
             # union = pred_lengths + gt_lengths - intersection
-            union = torch.clamp(union, min=0.0, max=1.0)
+            union = torch.clamp(union, min=0, max=max(self.shape))
             union = torch.prod(union, dim=-1)
 
             iou = ((intersection+self.eval_smooth)/(union+self.eval_smooth))
@@ -564,8 +581,9 @@ class ss_detection_Unet(object):
                     batch_id += 1
 
                 print(f"Epoch {epoch + 1}/{self.n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {self.scheduler.get_last_lr()}\n")
+                # self.test_model(mode='test')
                 
-                if (epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1:
+                if ((epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1) or (epoch+1 == self.n_epochs):
                     torch.save(self.model.state_dict(), self.model_dir+self.random_str+'_weights_{}.pth'.format(epoch + 1))
                     torch.save(self.model, self.model_dir+self.random_str+'_model_{}.pth'.format(epoch + 1))
                     print("Saved the Neural Network's model")
@@ -575,13 +593,13 @@ class ss_detection_Unet(object):
                 self.scheduler.step()
     
 
-    def test_model(self):
+    def test_model(self, mode='both'):
         if self.test:
             print("Starting to test the Neural Network...")
 
-            self.train_acc = self.evaluate_model(self.model, self.train_loader)
-            print('Accuracy on train data: {}'.format(self.train_acc))
-
+            if mode=='both':
+                self.train_acc = self.evaluate_model(self.model, self.train_loader)
+                print('Accuracy on train data: {}'.format(self.train_acc))
             self.test_acc = self.evaluate_model(self.model, self.test_loader)
             print('Accuracy on test data: {}\n'.format(self.test_acc))
 

@@ -9,20 +9,20 @@ import os
 class params_class(object):
     def __init__(self):
         
-        self.n_fft=1024
+        self.n_fft=128
         self.n_samples=128
-        # self.shape=(self.n_fft, self.n_samples)
-        self.shape=(self.n_fft,)
+        self.shape=(self.n_fft, self.n_samples)
+        # self.shape=(self.n_fft,)
 
-        self.sig_size_min=(1,)
-        self.sig_size_max=(256,)
+        self.sig_size_min=(1,1)
+        self.sig_size_max=(64,64)
         self.sw_fixed_size=20
-        self.sw_sig_size_min=(1,)
-        self.sw_sig_size_max=(256,)
+        self.sw_sig_size_min=(1,1)
+        self.sw_sig_size_max=(64,64)
         self.size_sam_mode='log'        # lin or log
         self.snr_min=0.5
-        self.snr_max=100
-        self.sw_fixed_snr=5.0
+        self.snr_max=100.0
+        self.sw_fixed_snr=2.0
         self.sw_snr_min=0.5
         self.sw_snr_max=100.0
         self.snr_sam_mode='log'        # lin or log
@@ -41,7 +41,7 @@ class params_class(object):
         self.n_adj_search=1
         self.n_largest=3
 
-        self.n_dataset=200000
+        self.n_dataset=10000
         self.generate_dataset=True
         self.remove_dataset=True
         self.mask_mode='binary'        # binary or snr or channels
@@ -56,13 +56,17 @@ class params_class(object):
         self.load_model_params=False
         self.model_name='YrE2lW_weights_20.pth'
         self.unet_mode = 'detection'     # segmentation or detection
+        self.lambda_start=10.0
+        self.lambda_length=1.0
+        self.lambda_obj=1.0
+        self.lambda_class=1.0
 
         self.draw_histogram=False
         self.mask_thr=0.0
         self.gt_mask_thr=0.5
         self.apply_pos_weight=False
         self.noise_power=1.0
-        self.ML_thr_coeff = 1.5
+        self.ML_thr_coeff=1.5
         self.ML_thr=self.ML_thr_coeff*10.0*self.noise_power
         self.eval_smooth=1e-6
         self.train_ratio=0.8
