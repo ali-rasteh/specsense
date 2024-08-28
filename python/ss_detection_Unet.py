@@ -115,7 +115,7 @@ class NumpyDataset(Dataset):
             bbox = self._transform(bbox)
             objectness = self._transform(objectness)
             classes = self._transform(classes)
-            return data, (bbox, objectness, classes)
+            return data, (mask, bbox, objectness, classes)
 
 
 
@@ -137,10 +137,11 @@ class BinarizeSTE(torch.autograd.Function):
     
 
 
-class UNet1D(nn.Module):
+class UNet(nn.Module):
     def __init__(self, shape=(1024,), n_layers=10, dim=1, n_out_channels=1, n_classes=1, mode='segmentation'):
-        super(UNet1D, self).__init__()
+        super(UNet, self).__init__()
 
+        self.shape = shape
         self.n_layers = n_layers
         self.dim = dim
         self.n_out_channels = n_out_channels
@@ -203,9 +204,9 @@ class UNet1D(nn.Module):
         self.out_conv = Conv(in_channels=2, out_channels=self.n_out_channels, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
 
-        self.fc_bbox = nn.Linear(int(np.prod(shape)), 2*len(shape) * self.n_classes)
-        self.fc_obj = nn.Linear(int(np.prod(shape)), self.n_classes)
-        self.fc_class = nn.Linear(int(np.prod(shape)), self.n_classes)
+        # self.fc_bbox = nn.Linear(int(np.prod(self.shape)), 2*len(self.shape) * self.n_classes)
+        # self.fc_obj = nn.Linear(int(np.prod(self.shape)), self.n_classes)
+        # self.fc_class = nn.Linear(int(np.prod(self.shape)), self.n_classes)
 
 
     def forward(self, x):
@@ -227,20 +228,73 @@ class UNet1D(nn.Module):
 
         output = self.out_conv(dec[-1])
         # output = self.sigmoid(self.out_conv(dec[-1]))
-        if self.mode=='segmentation':
-            return (output,)
+        return (output,)
+    
+        # if self.mode=='segmentation':
+        #     return (output,)
         
-        elif self.mode=='detection':
-            output_flat = torch.flatten(output, start_dim=2)
-            bboxes  = self.fc_bbox(output_flat)
-            objectnesses = self.fc_obj(output_flat)
-            # class_probs = self.fc_class(output_flat)
-            class_probs = None
+        # elif self.mode=='detection':
+        #     output_flat = torch.flatten(output, start_dim=2)
+        #     bboxes  = self.fc_bbox(output_flat)
+        #     objectnesses = self.fc_obj(output_flat)
+        #     # class_probs = self.fc_class(output_flat)
+        #     class_probs = None
         
-            return (bboxes, objectnesses, class_probs)
+        #     return (bboxes, objectnesses, class_probs)
 
 
+class UNetDetectionHead(nn.Module):
+    def __init__(self, shape=(1024,), dim=1, n_classes=1):
+        super(UNetDetectionHead, self).__init__()
 
+        self.shape = shape
+        self.dim = dim
+        self.n_classes = n_classes
+
+        # self.fc_bbox = nn.Linear(int(np.prod(self.shape)), 2*len(self.shape) * self.n_classes)
+        self.fc_bbox = nn.Sequential(
+                nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//100),
+                nn.ReLU(),
+                nn.Linear(int(np.prod(self.shape))//100, 2*len(self.shape) * self.n_classes))
+        # self.fc_obj = nn.Linear(int(np.prod(self.shape)), self.n_classes)
+        self.fc_obj = nn.Sequential(
+                nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//100),
+                nn.ReLU(),
+                nn.Linear(int(np.prod(self.shape))//100, self.n_classes))
+        # self.fc_class = nn.Linear(int(np.prod(self.shape)), self.n_classes)
+
+    def forward(self, x):
+        x_flat = torch.flatten(x, start_dim=2)
+        bboxes  = self.fc_bbox(x_flat)
+        objectnesses = self.fc_obj(x_flat)
+        # class_probs = self.fc_class(x_flat)
+        class_probs = None
+    
+        return (bboxes, objectnesses, class_probs)
+    
+
+
+class UNetWithDetectionHead(nn.Module):
+    def __init__(self, unet, dethead, problem_mode='detection', train_mode='end2end'):
+        super(UNetWithDetectionHead, self).__init__()
+        self.unet = unet
+        self.dethead = dethead
+        self.problem_mode = problem_mode
+        self.train_mode = train_mode
+
+    def forward(self, x):
+        if self.train_mode=='end2end':
+            mask = self.unet(x)[0]
+            mask = torch.sigmoid(mask)
+        elif self.train_mode=='separate':
+            with torch.no_grad():
+                mask = self.unet(x)[0]
+                mask = torch.sigmoid(mask)
+        det_output = self.dethead(mask)
+    
+        return det_output
+        
+    
 class ObjectDetectionLoss(nn.Module):
     def __init__(self, shape=(1024,), lambda_start=1.0, lambda_length=1.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=1, eval_smooth=1e-6, mask_thr=0.0, gt_mask_thr=0.5):
         super(ObjectDetectionLoss, self).__init__()
@@ -289,27 +343,27 @@ class ObjectDetectionLoss(nn.Module):
         pred_stops = pred_starts + pred_lengths
         gt_stops = gt_starts + gt_lengths
 
-        # intersection_start = torch.max(pred_starts, gt_starts)
-        # intersection_stop = torch.min(pred_stops, gt_stops)
-        # intersection = intersection_stop-intersection_start
-        # # intersection = torch.clamp(intersection, min=0.0, max=1.0)
-        # intersection_size = torch.prod(intersection, dim=-1)
+        intersection_start = torch.max(pred_starts, gt_starts)
+        intersection_stop = torch.min(pred_stops, gt_stops)
+        intersection = intersection_stop-intersection_start
+        # intersection = torch.clamp(intersection, min=0.0, max=1.0)
+        intersection_size = torch.prod(intersection, dim=-1)
 
-        # union_start = torch.min(pred_starts, gt_starts)
-        # union_stop = torch.max(pred_stops, gt_stops)
-        # union = union_stop-union_start
-        # # union = torch.clamp(union, min=0.0, max=1.0)
-        # union_size = torch.prod(union, dim=-1)
+        union_start = torch.min(pred_starts, gt_starts)
+        union_stop = torch.max(pred_stops, gt_stops)
+        union = union_stop-union_start
+        # union = torch.clamp(union, min=0.0, max=1.0)
+        union_size = torch.prod(union, dim=-1)
 
-        # iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
-        # # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
-        # bbox_start_loss = -iou
-        # bbox_length_loss = 0.0
+        iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
+        # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
+        bbox_start_loss = -iou
+        bbox_length_loss = 0.0
 
-        # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
-        # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
-        bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
-        bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
+        # # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
+        # # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+        # bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
+        # bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
         
         # Total loss
         total_loss = self.lambda_start * bbox_start_loss + self.lambda_length * bbox_length_loss + self.lambda_obj * objectness_loss + self.lambda_class * class_loss
@@ -334,7 +388,7 @@ class ss_detection_Unet(object):
         self.seed = params.seed
         self.batch_size = params.batch_size
         self.n_layers = params.n_layers
-        self.unet_mode = params.unet_mode
+        self.problem_mode = params.problem_mode
         self.lr = params.lr
         self.apply_pos_weight = params.apply_pos_weight
         self.mask_thr = params.mask_thr
@@ -344,7 +398,9 @@ class ss_detection_Unet(object):
         self.hist_bins = params.hist_bins
         self.sched_gamma = params.sched_gamma
         self.sched_step_size = params.sched_step_size
-        self.n_epochs = params.n_epochs
+        self.n_epochs_tot = params.n_epochs_tot
+        self.n_epochs_unet = params.n_epochs_unet
+        self.n_epochs_dethead = params.n_epochs_dethead
         self.nepoch_save = params.nepoch_save
         self.nbatch_log = params.nbatch_log
         self.norm_mode_data = params.norm_mode_data
@@ -355,11 +411,13 @@ class ss_detection_Unet(object):
         self.lambda_obj=params.lambda_obj
         self.lambda_class=params.lambda_class
         self.train = params.train
+        self.train_mode = params.train_mode
         self.test = params.test
         self.load_model_params = params.load_model_params
         self.random_str = params.random_str
         self.model_dir = params.model_dir
         self.model_name = params.model_name
+        self.model_unet_name = params.model_unet_name
         self.figs_dir = params.figs_dir
 
         self.data_transform = transforms.Compose([
@@ -378,26 +436,40 @@ class ss_detection_Unet(object):
             n_out_channels = self.n_sigs_max
         else:
             n_out_channels = 1
-        self.model = UNet1D(shape=self.shape, n_layers=self.n_layers, dim=len(self.shape), n_out_channels=n_out_channels, n_classes=self.n_sigs_max, mode=self.unet_mode)
-        print('Number of parameters in the model: {}'.format(self.count_parameters()))
+
+        self.model_unet = UNet(shape=self.shape, n_layers=self.n_layers, dim=len(self.shape), n_out_channels=n_out_channels, n_classes=self.n_sigs_max, mode=self.problem_mode)
+        if self.problem_mode == 'segmentation':
+            self.model_dethead = None
+            self.model = self.model_unet
+        elif self.problem_mode == 'detection':
+            self.model_dethead = UNetDetectionHead(shape=self.shape, dim=len(self.shape), n_classes=self.n_sigs_max)
+            self.model = UNetWithDetectionHead(unet=self.model_unet, dethead=self.model_dethead, problem_mode=self.problem_mode, train_mode=self.train_mode)
+        print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print('Unet device: {}'.format(self.device))
         
+        self.model_unet.to(self.device)
+        if self.model_dethead is not None:
+            self.model_dethead.to(self.device)
         self.model.to(self.device)
 
         print("Generated Neural network's model.")
 
 
     def load_model(self):
-        if self.load_model_params:
+        if 'model' in self.load_model_params:
             self.model.load_state_dict(torch.load(self.model_dir+self.model_name))
             # self.model = torch.load(self.model_dir+self.model_name)
-            print("Loaded Neural network's model.")
+            print("Loaded Neural network model for the whole network.")
+        if 'unet' in self.load_model_params:
+            self.model_unet.load_state_dict(torch.load(self.model_dir+self.model_unet_name))
+            print("Loaded Neural network model for the U-net.")
+        
 
 
-    def count_parameters(self):
-        return sum(p.numel() for p in self.model.parameters())
+    def count_parameters(self, model=None):
+        return sum(p.numel() for p in model.parameters())
 
 
     def load_optimizer(self):
@@ -407,14 +479,25 @@ class ss_detection_Unet(object):
                 print("Applied pos_weight to the loss function: {}".format(pos_weight))
             else:
                 pos_weight=None
-            if self.unet_mode=='segmentation':
-                self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-                # self.criterion = nn.BCELoss()
-            elif self.unet_mode=='detection':
-                self.criterion = ObjectDetectionLoss(shape=self.shape, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+            if self.problem_mode=='segmentation':
+                self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                # self.criterion_unet = nn.BCELoss()
+                self.criterion_dethead = None
+                self.criterion = self.criterion_unet
+            elif self.problem_mode=='detection':
+                self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+                self.criterion = self.criterion_dethead
         elif self.mask_mode=='snr':
-            self.criterion = nn.MSELoss()
+            self.criterion_unet = nn.MSELoss()
+            self.criterion_dethead = None
+            self.criterion = self.criterion_unet
         
+        self.optimizer_unet = optim.Adam(self.model_unet.parameters(), lr=self.lr)
+        self.scheduler_unet = optim.lr_scheduler.StepLR(self.optimizer_unet, step_size=self.sched_step_size, gamma=self.sched_gamma)
+        if self.model_dethead is not None:
+            self.optimizer_dethead = optim.Adam(self.model_dethead.parameters(), lr=self.lr)
+            self.scheduler_dethead = optim.lr_scheduler.StepLR(self.optimizer_dethead, step_size=self.sched_step_size, gamma=self.sched_gamma)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=self.sched_step_size, gamma=self.sched_gamma)
 
@@ -422,7 +505,7 @@ class ss_detection_Unet(object):
 
 
     def generate_data_loaders(self):
-        self.dataset = NumpyDataset(dataset_path=self.dataset_path, mode=self.unet_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
+        self.dataset = NumpyDataset(dataset_path=self.dataset_path, mode=self.problem_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
         if self.apply_pos_weight:
             self.dataset_zeroone_ratio = self.dataset._get_masks_zeroone_ratio()
         else:
@@ -441,8 +524,8 @@ class ss_detection_Unet(object):
         print("Generated Dataloaders.")
 
 
-    def intersection_over_union(self, pred, target):
-        if self.unet_mode=='segmentation':
+    def intersection_over_union(self, pred, target, mode='segmentation'):
+        if mode=='segmentation' or mode=='detection-unet':
             pred_c = pred > self.mask_thr
             target_c = target > self.gt_mask_thr
             
@@ -452,7 +535,7 @@ class ss_detection_Unet(object):
             iou = (intersection + self.eval_smooth) / (union + self.eval_smooth)
             iou = iou.mean().item()
 
-        elif self.unet_mode=='detection':
+        elif 'detection' in mode:
             (pred_bbox, pred_objectness, pred_classes) = pred
             (gt_bbox, gt_objectness, gt_classes) = target
 
@@ -509,7 +592,7 @@ class ss_detection_Unet(object):
         return dice.mean().item()
 
 
-    def evaluate_model(self, model, data_loader):
+    def evaluate_model(self, model, data_loader, mode='segmentation'):
         model.eval()
         score = 0
         mask_energy = 0
@@ -520,17 +603,22 @@ class ss_detection_Unet(object):
                 gt = tuple(gt[i].to(self.device) for i in range(len(gt)))
                 if len(gt)==1:
                     gt = gt[0]
+                else:
+                    if mode=='detection-unet':
+                        gt = gt[0]
+                    else:
+                        gt = gt[1:]
                 output = model(data)
                 if len(output)==1:
                     output = output[0]
-                if self.unet_mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels'):
-                    score += self.intersection_over_union(output, gt)
-                elif self.unet_mode=='segmentation' and self.mask_mode=='snr':
+                if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')) or mode=='detection-unet':
+                    score += self.intersection_over_union(output, gt, mode=mode)
+                elif mode=='segmentation' and self.mask_mode=='snr':
                     score += F.mse_loss(output, gt).item()
                     # score += ((gt.cpu().numpy()-output.cpu().numpy())**2).mean()
                     mask_energy += torch.mean(gt**2).item()
-                elif self.unet_mode=='detection':
-                    score += self.intersection_over_union(output, gt)
+                elif 'detection' in mode:
+                    score += self.intersection_over_union(output, gt, mode=mode)
                 if self.draw_histogram:
                     plt.figure(figsize=(10, 6))
                     output_h=output.clone()
@@ -556,51 +644,104 @@ class ss_detection_Unet(object):
 
 
     def train_model(self):
+        print("Beginning to train the whole Neural Network...")
+        if self.problem_mode=='segmentation':
+            self.train_model_one(mode='segmentation')
+        elif self.problem_mode=='detection':
+            if self.train_mode=='end2end':
+                self.train_model_one(mode='detection-end2end')
+            elif self.train_mode=='separate':
+                self.train_model_one(mode='detection-unet')
+                for param in self.model_unet.parameters():
+                    param.requires_grad = False
+                for param in self.model.unet.parameters():
+                    param.requires_grad = False
+                self.train_model_one(mode='detection-dethead')
+
+
+    def train_model_one(self, mode='segmentation'):
         if self.train:
-            print("Beginning to train the Neural Network...")
-            for epoch in range(self.n_epochs):
+            print("Beginning to train the Neural Network in mode: {}...".format(mode))
+            if mode=='segmentation' or mode=='detection-end2end':
+                model = self.model
+                name = ''
+                criterion = self.criterion
+                optimizer = self.optimizer
+                scheduler = self.scheduler
+                n_epochs = self.n_epochs_tot
+            elif mode=='detection-unet':
+                model = self.model_unet
+                name = '_unet'
+                criterion = self.criterion_unet
+                optimizer = self.optimizer_unet
+                scheduler = self.scheduler_unet
+                n_epochs = self.n_epochs_unet
+            elif mode=='detection-dethead':
+                model = self.model
+                name = ''
+                criterion = self.criterion_dethead
+                optimizer = self.optimizer_dethead
+                scheduler = self.scheduler_dethead
+                n_epochs = self.n_epochs_dethead
+
+
+            for epoch in range(n_epochs):
                 batch_id = 0
-                self.model.train()
+                model.train()
                 epoch_loss = 0
                 for data, gt in self.train_loader:
                     data = data.to(self.device)
                     gt = tuple(gt[i].to(self.device) for i in range(len(gt)))
                     if len(gt)==1:
                         gt = gt[0]
-                    self.optimizer.zero_grad()
-                    output = self.model(data)
+                    else:
+                        if mode=='detection-unet':
+                            gt = gt[0]
+                        else:
+                            gt = gt[1:]
+                    optimizer.zero_grad()
+                    output = model(data)
                     if len(output)==1:
                         output = output[0]
                     # output = BinarizeSTE.apply(output, self.mask_thr)
-                    loss = self.criterion(output, gt)
+                    loss = criterion(output, gt)
                     loss.backward()
-                    self.optimizer.step()
+                    optimizer.step()
                     epoch_loss += loss.item()
                     if (batch_id+1) % self.nbatch_log == 0 and self.nbatch_log != -1:
-                        print(f"Batch {batch_id + 1}/{len(self.train_loader)}, Loss: {loss.item()}, lr: {self.scheduler.get_last_lr()}")
+                        print(f"Batch {batch_id + 1}/{len(self.train_loader)}, Loss: {loss.item()}, lr: {scheduler.get_last_lr()}")
                     batch_id += 1
 
-                print(f"Epoch {epoch + 1}/{self.n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {self.scheduler.get_last_lr()}\n")
+                print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {scheduler.get_last_lr()}\n")
                 # self.test_model(mode='test')
                 
-                if ((epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1) or (epoch+1 == self.n_epochs):
-                    torch.save(self.model.state_dict(), self.model_dir+self.random_str+'_weights_{}.pth'.format(epoch + 1))
-                    torch.save(self.model, self.model_dir+self.random_str+'_model_{}.pth'.format(epoch + 1))
+                if ((epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1) or (epoch+1 == n_epochs):
+                    torch.save(model.state_dict(), self.model_dir+self.random_str+name+'_weights_{}.pth'.format(epoch + 1))
+                    torch.save(model, self.model_dir+self.random_str+name+'_model_{}.pth'.format(epoch + 1))
                     print("Saved the Neural Network's model")
-                    self.test_acc = self.evaluate_model(self.model, self.test_loader)
+                    self.test_acc = self.evaluate_model(model, self.test_loader, mode=mode)
                     print('Accuracy on test data: {}\n'.format(self.test_acc))
 
-                self.scheduler.step()
+                scheduler.step()
     
 
-    def test_model(self, mode='both'):
+    def test_model(self, mode='both', eval_mode=None):
         if self.test:
             print("Starting to test the Neural Network...")
+            if eval_mode is None:
+                if self.problem_mode=='segmentation':
+                    eval_mode='segmentation'
+                elif self.problem_mode=='detection':
+                    eval_mode='detection-end2end'
+                else:
+                    eval_mode=eval_mode
+            else:
+                eval_mode=eval_mode
 
             if mode=='both':
-                self.train_acc = self.evaluate_model(self.model, self.train_loader)
+                self.train_acc = self.evaluate_model(self.model, self.train_loader, mode=eval_mode)
                 print('Accuracy on train data: {}'.format(self.train_acc))
-            self.test_acc = self.evaluate_model(self.model, self.test_loader)
+            self.test_acc = self.evaluate_model(self.model, self.test_loader, mode=eval_mode)
             print('Accuracy on test data: {}\n'.format(self.test_acc))
 
 

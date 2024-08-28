@@ -9,20 +9,20 @@ import os
 class params_class(object):
     def __init__(self):
         
-        self.n_fft=128
+        self.n_fft=1024
         self.n_samples=128
-        self.shape=(self.n_fft, self.n_samples)
-        # self.shape=(self.n_fft,)
+        # self.shape=(self.n_fft, self.n_samples)
+        self.shape=(self.n_fft,)
 
-        self.sig_size_min=(1,1)
-        self.sig_size_max=(64,64)
+        self.sig_size_min=(20,20)
+        self.sig_size_max=(256,256)
         self.sw_fixed_size=20
         self.sw_sig_size_min=(1,1)
-        self.sw_sig_size_max=(64,64)
+        self.sw_sig_size_max=(256,256)
         self.size_sam_mode='log'        # lin or log
-        self.snr_min=0.5
+        self.snr_min=2.0
         self.snr_max=100.0
-        self.sw_fixed_snr=2.0
+        self.sw_fixed_snr=5.0
         self.sw_snr_min=0.5
         self.sw_snr_max=100.0
         self.snr_sam_mode='log'        # lin or log
@@ -41,7 +41,7 @@ class params_class(object):
         self.n_adj_search=1
         self.n_largest=3
 
-        self.n_dataset=10000
+        self.n_dataset=100000
         self.generate_dataset=True
         self.remove_dataset=True
         self.mask_mode='binary'        # binary or snr or channels
@@ -50,17 +50,22 @@ class params_class(object):
         self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
         self.lr=1e-2
-        self.n_epochs=50
+        self.n_epochs_tot=50
+        self.n_epochs_unet=30
         self.train=True
         self.test=True
-        self.load_model_params=False
+        self.load_model_params=['unet', 'model']        # List of model parameters to load
         self.model_name='YrE2lW_weights_20.pth'
-        self.unet_mode = 'detection'     # segmentation or detection
+        self.model_unet_name='YrE2lW_unet_weights_20.pth'
+        self.problem_mode='detection'     # segmentation or detection
+        self.train_mode='separate'     # end2end or separate
         self.lambda_start=10.0
         self.lambda_length=1.0
         self.lambda_obj=1.0
         self.lambda_class=1.0
 
+        # Constant parameters
+        self.n_epochs_dethead=self.n_epochs_tot-self.n_epochs_unet
         self.draw_histogram=False
         self.mask_thr=0.0
         self.gt_mask_thr=0.5
