@@ -142,7 +142,6 @@ class specsense_detection(object):
 
 
     def likelihood(self, S):
-
         if S is None:
             ll = 0.0
         else:
@@ -154,7 +153,6 @@ class specsense_detection(object):
 
 
     def ML_detector(self, psd, thr=0.0):
-
         shape = np.shape(psd)
         ndims = len(shape)
         ll_max = 0.0
@@ -184,7 +182,6 @@ class specsense_detection(object):
 
 
     def ML_detector_efficient(self, psd, thr=0.0, mode='np'):
-
         ll_max = 0.0
         S_ML = None
 

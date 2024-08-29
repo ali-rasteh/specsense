@@ -6,6 +6,7 @@ from torch import nn, optim
 import torch.nn.functional as F
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
+import cv2
 
 
 
@@ -275,21 +276,24 @@ class UNetDetectionHead(nn.Module):
 
 
 class UNetWithDetectionHead(nn.Module):
-    def __init__(self, unet, dethead, problem_mode='detection', train_mode='end2end'):
+    def __init__(self, unet, dethead, problem_mode='detection', train_mode='end2end', mask_thr=0.0):
         super(UNetWithDetectionHead, self).__init__()
         self.unet = unet
         self.dethead = dethead
         self.problem_mode = problem_mode
         self.train_mode = train_mode
+        self.mask_thr = mask_thr
 
     def forward(self, x):
         if self.train_mode=='end2end':
             mask = self.unet(x)[0]
-            mask = torch.sigmoid(mask)
+            # mask = torch.sigmoid(mask)
+            mask = (mask > self.mask_thr).float()
         elif self.train_mode=='separate':
             with torch.no_grad():
                 mask = self.unet(x)[0]
-                mask = torch.sigmoid(mask)
+                # mask = torch.sigmoid(mask)
+                mask = (mask > self.mask_thr).float()
         det_output = self.dethead(mask)
     
         return det_output
@@ -343,27 +347,27 @@ class ObjectDetectionLoss(nn.Module):
         pred_stops = pred_starts + pred_lengths
         gt_stops = gt_starts + gt_lengths
 
-        intersection_start = torch.max(pred_starts, gt_starts)
-        intersection_stop = torch.min(pred_stops, gt_stops)
-        intersection = intersection_stop-intersection_start
-        # intersection = torch.clamp(intersection, min=0.0, max=1.0)
-        intersection_size = torch.prod(intersection, dim=-1)
+        # intersection_start = torch.max(pred_starts, gt_starts)
+        # intersection_stop = torch.min(pred_stops, gt_stops)
+        # intersection = intersection_stop-intersection_start
+        # # intersection = torch.clamp(intersection, min=0.0, max=1.0)
+        # intersection_size = torch.prod(intersection, dim=-1)
 
-        union_start = torch.min(pred_starts, gt_starts)
-        union_stop = torch.max(pred_stops, gt_stops)
-        union = union_stop-union_start
-        # union = torch.clamp(union, min=0.0, max=1.0)
-        union_size = torch.prod(union, dim=-1)
+        # union_start = torch.min(pred_starts, gt_starts)
+        # union_stop = torch.max(pred_stops, gt_stops)
+        # union = union_stop-union_start
+        # # union = torch.clamp(union, min=0.0, max=1.0)
+        # union_size = torch.prod(union, dim=-1)
 
-        iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
-        # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
-        bbox_start_loss = -iou
-        bbox_length_loss = 0.0
+        # iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
+        # # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
+        # bbox_start_loss = -iou
+        # bbox_length_loss = 0.0
 
-        # # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
-        # # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
-        # bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
-        # bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
+        # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
+        # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+        bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
+        bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
         
         # Total loss
         total_loss = self.lambda_start * bbox_start_loss + self.lambda_length * bbox_length_loss + self.lambda_obj * objectness_loss + self.lambda_class * class_loss
@@ -410,7 +414,10 @@ class ss_detection_Unet(object):
         self.lambda_length=params.lambda_length
         self.lambda_obj=params.lambda_obj
         self.lambda_class=params.lambda_class
+        self.contours_min_area=params.contours_min_area
+        self.contours_max_gap=params.contours_max_gap
         self.train = params.train
+        self.det_mode = params.det_mode
         self.train_mode = params.train_mode
         self.test = params.test
         self.load_model_params = params.load_model_params
@@ -441,9 +448,12 @@ class ss_detection_Unet(object):
         if self.problem_mode == 'segmentation':
             self.model_dethead = None
             self.model = self.model_unet
-        elif self.problem_mode == 'detection':
+        elif self.problem_mode == 'detection' and self.det_mode=='contours':
+            self.model_dethead = None
+            self.model = self.model_unet
+        elif self.problem_mode == 'detection' and self.det_mode=='nn':
             self.model_dethead = UNetDetectionHead(shape=self.shape, dim=len(self.shape), n_classes=self.n_sigs_max)
-            self.model = UNetWithDetectionHead(unet=self.model_unet, dethead=self.model_dethead, problem_mode=self.problem_mode, train_mode=self.train_mode)
+            self.model = UNetWithDetectionHead(unet=self.model_unet, dethead=self.model_dethead, problem_mode=self.problem_mode, train_mode=self.train_mode, mask_thr=self.mask_thr)
         print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -467,7 +477,6 @@ class ss_detection_Unet(object):
             print("Loaded Neural network model for the U-net.")
         
 
-
     def count_parameters(self, model=None):
         return sum(p.numel() for p in model.parameters())
 
@@ -484,7 +493,11 @@ class ss_detection_Unet(object):
                 # self.criterion_unet = nn.BCELoss()
                 self.criterion_dethead = None
                 self.criterion = self.criterion_unet
-            elif self.problem_mode=='detection':
+            elif self.problem_mode=='detection' and self.det_mode=='contours':
+                self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                self.criterion_dethead = None
+                self.criterion = self.criterion_unet
+            elif self.problem_mode=='detection' and self.det_mode=='nn':
                 self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
                 self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
                 self.criterion = self.criterion_dethead
@@ -524,10 +537,193 @@ class ss_detection_Unet(object):
         print("Generated Dataloaders.")
 
 
+    def extract_bbox(self, mask, min_area=1, max_gap=1):
+        if not isinstance(mask, np.ndarray):
+            mask = mask.cpu().numpy()
+        # mask = mask.astype(np.uint8)
+
+        ndims = len(mask.shape)
+        bboxes = []
+        objectnesses = 0.0
+        max_area = 0
+
+        if ndims == 1:
+            bbox = [0,0]
+            length = mask.shape[0]
+            for x in range(length):
+                if mask[x] == 1.0:
+                    # Initialize bounds
+                    min_x = x
+                    max_x = x
+                    component_area = 0
+
+                    # Expand the bounds to include the entire object
+                    stack = [x]
+                    while stack:
+                        cx = stack.pop()
+                        if mask[cx] == 1.0:
+                            mask[cx] = 0.0  # Mark as visited
+                            component_area += 1
+
+                            # Update bounding box coordinates
+                            min_x = min(min_x, cx)
+                            max_x = max(max_x, cx)
+
+                            # Add neighboring pixels to the stack
+                            # if cx > 0:
+                            #     stack.append(cx - 1)
+                            # if cx < length - 1:
+                            #     stack.append(cx + 1)
+
+                            # Add neighboring pixels to the stack including those within the gap size
+                            for dx in range(-max_gap, max_gap + 1):
+                                nx = cx + dx
+                                if 0 <= nx < length and mask[nx] == 1.0:
+                                    stack.append(nx)
+
+                    if component_area >= min_area:
+                        w = max_x - min_x + 1
+                        bboxes.append([min_x, w])
+                        area = w
+                        if area > max_area:
+                            max_area = area
+                            bbox = bboxes[-1]
+                            objectnesses = 1.0
+        elif ndims == 2:
+            height, width = mask.shape
+            # Iterate over the mask to find bounding boxes
+            for y in range(height):
+                for x in range(width):
+                    # If we find a pixel belonging to an object
+                    if mask[y, x] == 1.0:
+                        # Initialize bounds
+                        min_x, min_y = x, y
+                        max_x, max_y = x, y
+                        component_area = 0
+
+                        # Expand the bounds to include the entire object
+                        stack = [[x, y]]
+                        while stack:
+                            cx, cy = stack.pop()
+                            if mask[cy, cx] == 1.0:
+                                mask[cy, cx] = 0.0  # Mark as visited
+                                component_area += 1
+
+                                # Update bounding box coordinates
+                                min_x = min(min_x, cx)
+                                min_y = min(min_y, cy)
+                                max_x = max(max_x, cx)
+                                max_y = max(max_y, cy)
+
+                                # Add neighboring pixels to the stack
+                                # if cx > 0:
+                                #     stack.append([cx - 1, cy])
+                                # if cx < width - 1:
+                                #     stack.append([cx + 1, cy])
+                                # if cy > 0:
+                                #     stack.append([cx, cy - 1])
+                                # if cy < height - 1:
+                                #     stack.append([cx, cy + 1])
+
+                                # Add neighboring pixels to the stack including those within the gap size
+                                for dx in range(-max_gap, max_gap + 1):
+                                    for dy in range(-max_gap, max_gap + 1):
+                                        nx, ny = cx + dx, cy + dy
+                                        if 0 <= nx < width and 0 <= ny < height and mask[ny, nx] == 1.0:
+                                            stack.append([nx, ny])
+
+                        if component_area >= min_area:
+                            w = max_x - min_x + 1
+                            h = max_y - min_y + 1
+                            bboxes.append([min_x, min_y, w, h])
+                            area = w * h
+                            if area > max_area:
+                                max_area = area
+                                bbox = bboxes[-1]
+                                objectnesses = 1.0
+
+        return (bbox, objectnesses)
+
+
+    def extract_bbox_efficient(self, masks, min_area=1, max_gap=1):
+        if not isinstance(masks, np.ndarray):
+            masks = masks.cpu().numpy()
+
+        bboxes_out = np.zeros((masks.shape[0], masks.shape[1], 2*len(self.shape)*self.n_sigs_max), dtype=float)
+        objectnesses_out = np.zeros((masks.shape[0], masks.shape[1], self.n_sigs_max), dtype=float)
+        classes_out = np.zeros((masks.shape[0], masks.shape[1], self.n_sigs_max), dtype=int)
+
+        for batch_id, mask in enumerate(masks):
+            for ch, mask_c in enumerate(mask):
+                ndims = len(mask_c.shape)
+                bboxes = []
+                objectnesses = 0.0
+
+                if ndims == 1:
+                    # Convert to a 2D array for contour finding
+                    mask_2d = mask_c.reshape(1, -1).astype(np.uint8)
+                    
+                    contours, _ = cv2.findContours(mask_2d, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for contour in contours:
+                        x, y, w, h = cv2.boundingRect(contour)
+                        # if w >= min_area:  # Only consider boxes larger than min_area
+                        bboxes.append([x, w])
+                    
+                    # Sort bounding boxes by their X coordinate
+                    bboxes.sort()
+                    # Merge boxes with gaps less than or equal to max_gap
+                    merged_boxes = []
+                    current_box = bboxes[0] if bboxes else None
+
+                    for i in range(1, len(bboxes)):
+                        next_box = bboxes[i]
+                        # Check if the gap between current and next box is <= max_gap
+                        if next_box[0] - (current_box[0] + current_box[1]) <= max_gap:
+                            # Merge the boxes
+                            new_x = current_box[0]
+                            new_w = (next_box[0] + next_box[1]) - current_box[0]
+                            current_box = (new_x, new_w)
+                        else:
+                            # Save the current box and move to the next
+                            merged_boxes.append(current_box)
+                            current_box = next_box
+                    
+                    # Add the last box
+                    if current_box:
+                        merged_boxes.append(current_box)
+                    
+                    merged_boxes = [item for item in merged_boxes if item[1] >= min_area]
+
+                    # Find the largest bounding box
+                    if merged_boxes:
+                        # bboxes = max(merged_boxes, key=lambda b: b[1])
+                        bboxes = sorted(merged_boxes, key=lambda b: b[1])
+                    else:
+                        bboxes = []
+                    n_sigs = min(len(bboxes), self.n_sigs_max)
+                    bboxes = bboxes[:n_sigs]
+                    bboxes = bboxes + [[0,0]] * (self.n_sigs_max - n_sigs)
+                    objectnesses = [1.0] * n_sigs + [0.0] * (self.n_sigs_max - n_sigs)
+                    classes = [0] * n_sigs + [-1] * (self.n_sigs_max - n_sigs)
+                
+
+                # return (bbox, objectness)
+                bboxes_out[batch_id, ch] = np.array(bboxes).flatten()
+                objectnesses_out[batch_id, ch] = np.array(objectnesses).flatten()
+                classes_out[batch_id, ch] = np.array(classes).flatten()
+
+        bboxes_out /= max(self.shape)
+        bboxes_out = torch.tensor(bboxes_out, dtype=torch.float32).to(self.device)
+        objectnesses_out = torch.tensor(objectnesses_out, dtype=torch.float32).to(self.device)
+        classes_out = torch.tensor(classes_out, dtype=torch.int32).to(self.device)
+        return (bboxes_out, objectnesses_out, classes_out)
+
+
     def intersection_over_union(self, pred, target, mode='segmentation'):
         if mode=='segmentation' or mode=='detection-unet':
             pred_c = pred > self.mask_thr
             target_c = target > self.gt_mask_thr
+            # target_c = target
             
             intersection = (pred_c & target_c).float().sum()
             union = (pred_c | target_c).float().sum()
@@ -538,6 +734,8 @@ class ss_detection_Unet(object):
         elif 'detection' in mode:
             (pred_bbox, pred_objectness, pred_classes) = pred
             (gt_bbox, gt_objectness, gt_classes) = target
+            # print(pred_bbox[:10])
+            # print(gt_bbox[:10])
 
             pred_objectness = (pred_objectness > self.mask_thr).float()
             # gt_objectness = (gt_objectness > self.gt_mask_thr).float()
@@ -611,6 +809,9 @@ class ss_detection_Unet(object):
                 output = model(data)
                 if len(output)==1:
                     output = output[0]
+                if mode=='detection-contours':
+                    output = (output>self.mask_thr).float()
+                    output = self.extract_bbox_efficient(output, min_area=self.contours_min_area, max_gap=self.contours_max_gap)
                 if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')) or mode=='detection-unet':
                     score += self.intersection_over_union(output, gt, mode=mode)
                 elif mode=='segmentation' and self.mask_mode=='snr':
@@ -644,25 +845,28 @@ class ss_detection_Unet(object):
 
 
     def train_model(self):
-        print("Beginning to train the whole Neural Network...")
-        if self.problem_mode=='segmentation':
-            self.train_model_one(mode='segmentation')
-        elif self.problem_mode=='detection':
-            if self.train_mode=='end2end':
-                self.train_model_one(mode='detection-end2end')
-            elif self.train_mode=='separate':
-                self.train_model_one(mode='detection-unet')
-                for param in self.model_unet.parameters():
-                    param.requires_grad = False
-                for param in self.model.unet.parameters():
-                    param.requires_grad = False
-                self.train_model_one(mode='detection-dethead')
+        if self.train:
+            print("Beginning to train the whole Neural Network...")
+            if self.problem_mode=='segmentation':
+                self.train_model_one(mode='segmentation')
+            elif self.problem_mode=='detection' and self.det_mode=='contours':
+                self.train_model_one(mode='detection-contours')
+            elif self.problem_mode=='detection' and self.det_mode=='nn':
+                if self.train_mode=='end2end':
+                    self.train_model_one(mode='detection-end2end')
+                elif self.train_mode=='separate':
+                    self.train_model_one(mode='detection-unet')
+                    for param in self.model_unet.parameters():
+                        param.requires_grad = False
+                    for param in self.model.unet.parameters():
+                        param.requires_grad = False
+                    self.train_model_one(mode='detection-dethead')
 
 
     def train_model_one(self, mode='segmentation'):
         if self.train:
             print("Beginning to train the Neural Network in mode: {}...".format(mode))
-            if mode=='segmentation' or mode=='detection-end2end':
+            if mode=='segmentation' or mode=='detection-end2end' or mode=='detection-contours':
                 model = self.model
                 name = ''
                 criterion = self.criterion
@@ -695,7 +899,7 @@ class ss_detection_Unet(object):
                     if len(gt)==1:
                         gt = gt[0]
                     else:
-                        if mode=='detection-unet':
+                        if mode=='detection-unet' or mode=='detection-contours':
                             gt = gt[0]
                         else:
                             gt = gt[1:]
@@ -731,7 +935,9 @@ class ss_detection_Unet(object):
             if eval_mode is None:
                 if self.problem_mode=='segmentation':
                     eval_mode='segmentation'
-                elif self.problem_mode=='detection':
+                elif self.problem_mode=='detection' and self.det_mode=='contours':
+                    eval_mode='detection-contours'
+                elif self.problem_mode=='detection' and self.det_mode=='nn':
                     eval_mode='detection-end2end'
                 else:
                     eval_mode=eval_mode
@@ -746,3 +952,13 @@ class ss_detection_Unet(object):
 
 
 
+
+if __name__ == '__main__':
+    from ss_detection_test import params_class
+    params = params_class()
+    ss_det_unet = ss_detection_Unet(params)
+    # mask = np.array([0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # mask = mask.reshape(1, 1, -1)
+    mask = np.random.randint(0, 2, (40000,1,1024))
+    bounding_boxes = ss_det_unet.extract_bbox_efficient(mask, min_area=2, max_gap=2)
+    print("Bounding Boxes:", bounding_boxes)

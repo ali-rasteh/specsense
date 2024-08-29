@@ -14,15 +14,15 @@ class params_class(object):
         # self.shape=(self.n_fft, self.n_samples)
         self.shape=(self.n_fft,)
 
-        self.sig_size_min=(20,20)
+        self.sig_size_min=(1,1)
         self.sig_size_max=(256,256)
         self.sw_fixed_size=20
         self.sw_sig_size_min=(1,1)
         self.sw_sig_size_max=(256,256)
         self.size_sam_mode='log'        # lin or log
-        self.snr_min=2.0
+        self.snr_min=0.5
         self.snr_max=100.0
-        self.sw_fixed_snr=5.0
+        self.sw_fixed_snr=2.0
         self.sw_snr_min=0.5
         self.sw_snr_max=100.0
         self.snr_sam_mode='log'        # lin or log
@@ -41,7 +41,7 @@ class params_class(object):
         self.n_adj_search=1
         self.n_largest=3
 
-        self.n_dataset=100000
+        self.n_dataset=200000
         self.generate_dataset=True
         self.remove_dataset=True
         self.mask_mode='binary'        # binary or snr or channels
@@ -51,14 +51,17 @@ class params_class(object):
 
         self.lr=1e-2
         self.n_epochs_tot=50
-        self.n_epochs_unet=30
+        self.n_epochs_unet=50
         self.train=True
         self.test=True
-        self.load_model_params=['unet', 'model']        # List of model parameters to load
-        self.model_name='YrE2lW_weights_20.pth'
-        self.model_unet_name='YrE2lW_unet_weights_20.pth'
+        self.load_model_params=[]        # List of model parameters to load, unet and model
+        self.model_name='XRRiLZ_weights_30.pth'
+        self.model_unet_name='XRRiLZ_unet_weights_30.pth'
         self.problem_mode='detection'     # segmentation or detection
-        self.train_mode='separate'     # end2end or separate
+        self.det_mode='contours'     # nn or contours
+        self.contours_min_area=2
+        self.contours_max_gap=1
+        self.train_mode='end2end'     # end2end or separate
         self.lambda_start=10.0
         self.lambda_length=1.0
         self.lambda_obj=1.0
@@ -89,7 +92,7 @@ class params_class(object):
         self.test_n_dataset=10000
         self.random_str=None
         self.ML_mode='torch'       # np or torch
-        self.model_dir='./model/'
+        self.model_dir='./model/backup/'
         self.figs_dir='./figs/'
         self.logs_dir='./logs/'
         self.data_dir='./data/'
