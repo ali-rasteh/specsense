@@ -14,28 +14,28 @@ class params_class(object):
         # self.shape=(self.n_fft, self.n_samples)
         self.shape=(self.n_fft,)
 
-        self.sig_size_min=(1,1)
+        self.sig_size_min=(4,4)
         self.sig_size_max=(256,256)
-        self.sw_fixed_size=20
+        self.sw_fixed_size=30
         self.sw_sig_size_min=(1,1)
         self.sw_sig_size_max=(256,256)
         self.size_sam_mode='log'        # lin or log
-        self.snr_min=0.5
+        self.snr_min=1.0
         self.snr_max=100.0
-        self.sw_fixed_snr=2.0
+        self.sw_fixed_snr=10.0
         self.sw_snr_min=0.5
         self.sw_snr_max=100.0
         self.snr_sam_mode='log'        # lin or log
         self.n_sigs_min=0
         self.n_sigs_max=1
-        self.sw_n_sigs_min=1
-        self.sw_n_sigs_max=1
         self.n_sigs_p_dist=[0.1,0.9]
         # self.n_sigs_p_dist=None
+        self.sw_n_sigs_min=1
+        self.sw_n_sigs_max=1
         self.sw_n_sigs_p_dist=None
         
-        self.sweep_snr=True
-        self.sweep_size=True
+        self.sweep_snr=['nn','ml']     # nn or ml
+        self.sweep_size=['nn','ml']    # nn or ml
         self.n_simulations=100
         self.sweep_steps=20
         self.n_adj_search=1
@@ -50,20 +50,22 @@ class params_class(object):
         self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
         self.lr=1e-2
-        self.n_epochs_tot=50
+        self.n_epochs_tot=100
         self.n_epochs_unet=50
         self.train=True
         self.test=True
         self.load_model_params=[]        # List of model parameters to load, unet and model
-        self.model_name='XRRiLZ_weights_30.pth'
-        self.model_unet_name='XRRiLZ_unet_weights_30.pth'
+        self.save_model=True
+        self.model_name='cO2pk9_weights_10.pth'
+        self.model_unet_name='cO2pk9_unet_weights_10.pth'
         self.problem_mode='detection'     # segmentation or detection
-        self.det_mode='contours'     # nn or contours
-        self.contours_min_area=2
+        self.det_mode='nn-unet'     # nn-unet or nn-simple or contours
+        self.train_mode='separate'     # end2end or separate
+        self.obj_det_loss_mode='mse'    # iou or mse
+        self.contours_min_area=1
         self.contours_max_gap=1
-        self.train_mode='end2end'     # end2end or separate
         self.lambda_start=10.0
-        self.lambda_length=1.0
+        self.lambda_length=2.0
         self.lambda_obj=1.0
         self.lambda_class=1.0
 
@@ -92,7 +94,8 @@ class params_class(object):
         self.test_n_dataset=10000
         self.random_str=None
         self.ML_mode='torch'       # np or torch
-        self.model_dir='./model/backup/'
+        self.model_save_dir='./model/'
+        self.model_load_dir='./model/backup/'
         self.figs_dir='./figs/'
         self.logs_dir='./logs/'
         self.data_dir='./data/'
@@ -119,7 +122,7 @@ class params_class(object):
         self.n_sigs_p_dist = np.array(self.n_sigs_p_dist) if self.n_sigs_p_dist is not None else self.n_sigs_p_dist
         self.sw_n_sigs_p_dist = np.array(self.sw_n_sigs_p_dist) if self.sw_n_sigs_p_dist is not None else self.sw_n_sigs_p_dist
 
-        for path in [self.model_dir, self.data_dir, self.figs_dir, self.logs_dir]:
+        for path in [self.model_save_dir, self.model_load_dir, self.data_dir, self.figs_dir, self.logs_dir]:
             if not os.path.exists(path):
                 os.makedirs(path)
 
@@ -161,7 +164,7 @@ if __name__ == '__main__':
 
     det_rate_snrs = {}
     det_rate_sizes = {}
-    if params.sweep_snr and params.test:
+    if 'nn' in params.sweep_snr and params.test:
         det_rate = {}
         for snr in params.sw_snrs:
             dataset_path=params.data_dir+'psd_dataset_snr-{:0.2f}'.format(snr)+'.npz'
@@ -179,7 +182,7 @@ if __name__ == '__main__':
         print("NN detection rate for SNRs: {}\n".format(det_rate))
         det_rate_snrs['snr_NN'] = det_rate.copy()
 
-    if params.sweep_size and params.test:
+    if 'nn' in params.sweep_size and params.test:
         det_rate = {}
         for size in params.sw_sizes:
             dataset_path=params.data_dir+'psd_dataset_size-{}'.format(str(size).replace(" ", ""))+'.npz'
@@ -198,7 +201,7 @@ if __name__ == '__main__':
         det_rate_sizes['size_NN'] = det_rate.copy()
 
 
-    if params.sweep_snr:
+    if 'ml' in params.sweep_snr:
         params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)
         det_rate = ss_det.sweep_snrs(snrs=params.sw_snrs, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, sig_size_min=params.fixed_size, sig_size_max=params.fixed_size, mode='simple')
         print("ML detection rate for SNRs: {}\n".format(det_rate))
@@ -208,7 +211,7 @@ if __name__ == '__main__':
         print("ML-binary search detection rate for SNRs: {}\n".format(det_rate))
         det_rate_snrs['snr_ML_binary_search'] = det_rate.copy()
 
-    if params.sweep_size:
+    if 'ml' in params.sweep_size:
         det_rate = ss_det.sweep_sizes(sizes=params.sw_sizes, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, snr_range=params.fixed_snr_range, mode='simple')
         print("ML detection rate for signal sizes: {}\n".format(det_rate))
         det_rate_sizes['size_ML'] = det_rate.copy()
@@ -223,6 +226,8 @@ if __name__ == '__main__':
     # det_rate_snrs['snr_ML'] = {0.5: 0.0, 0.6608103647168022: 0.0, 0.8733406762343062: 0.20918055555555556, 1.1542251415688212: 0.6687270622895626, 1.5254478735307908: 0.9220299145299148, 2.0160635313287045: 0.951387939221273, 2.6644713548591303: 0.9756111111111115, 3.5214205755638686: 0.9897777777777783, 4.653982429719222: 1.0000000000000004, 6.150799653536695: 0.9977777777777783, 8.129024324707132: 0.9977777777777783, 10.74348705760295: 1.0000000000000004, 14.198815201729696: 1.0000000000000004, 18.765448504002958: 1.0000000000000004, 24.800805740009125: 1.0000000000000004, 32.77725897265199: 1.0000000000000004, 43.319104912270475: 1.0000000000000004, 57.25142703256576: 1.0000000000000004, 75.66467275589427: 1.0000000000000004, 100.0: 1.0000000000000004}
     # det_rate_sizes['size_ML'] = {(1,): 0.0, (2,): 0.0, (3,): 0.0, (4,): 0.0075, (5,): 0.0, (7,): 0.05830128205128205, (10,): 0.19539793539793546, (13,): 0.21997448048597426, (18,): 0.47818304223744723, (24,): 0.7435307446661368, (33,): 0.8897729185120934, (44,): 0.9282022750425882, (59,): 0.9422651951653213, (79,): 0.9559282061772282, (106,): 0.9653049450759268, (142,): 0.9750333068426427, (191,): 0.9798842378658682, (256,): 0.986466015034174}
     # ss_det.plot(plot_dic={**det_rate_snrs, **det_rate_sizes})
+    print(det_rate_snrs)
+    print(det_rate_sizes)
     if params.sweep_snr:
         ss_det.plot(plot_dic=det_rate_snrs)
     if params.sweep_size:

@@ -315,7 +315,7 @@ class specsense_detection(object):
         ndims = len(shape)
         if ndims==1:
             n_fft = shape[0]
-            n_stage = int(np.round(np.log2(shape[0]))) + 1
+            n_stage = int(np.round(np.log2(n_fft))) + 1
             for i in range(n_stage):
                 n_channels = 2 ** (i)
                 n_features = int(n_fft/n_channels)
@@ -639,7 +639,6 @@ class specsense_detection(object):
 
 
     def plot(self, plot_dic):
-        print(plot_dic)
         colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
         plt.figure()
         for i, plot_name in enumerate(list(plot_dic.keys())):

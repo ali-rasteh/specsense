@@ -13,7 +13,7 @@ import cv2
 
 class NumpyDataset(Dataset):
 
-    def __init__(self, dataset_path, mode='segmentation', norm_mode_data='std', norm_mode_mask='none', norm_mode_bbox='len', mask_mode='binary'):
+    def __init__(self, shape=(1024,), dataset_path=None, problem_mode='segmentation', det_mode=None, norm_mode_data='std', norm_mode_mask='none', norm_mode_bbox='len', mask_mode='binary'):
         dataset = np.load(dataset_path)
 
         self.data = dataset['data']
@@ -22,7 +22,9 @@ class NumpyDataset(Dataset):
         self.objectnesses = dataset['objectnesses']
         self.classes = dataset['classes']
 
-        self.mode = mode
+        self.shape = shape
+        self.problem_mode = problem_mode
+        self.det_mode = det_mode
         self.norm_mode_data = norm_mode_data
         self.norm_mode_mask = norm_mode_mask
         self.norm_mode_bbox = norm_mode_bbox
@@ -30,6 +32,10 @@ class NumpyDataset(Dataset):
 
         # self.data_transform = data_transform
         # self.mask_transform = mask_transform
+
+        if self.problem_mode=='detection' and self.det_mode=='nn-simple':
+            self.data = self.preprocess_llr(self.data)
+
 
         self.min_data = self.data.min()
         self.max_data = self.data.max()
@@ -77,6 +83,32 @@ class NumpyDataset(Dataset):
             pass
 
 
+    def preprocess_llr(self, psd):
+        ndims = len(self.shape)
+        if ndims==1:
+            n_features = 2*self.shape[0]-1
+        else:
+            raise NotImplementedError("Not implemented for ndims={}".format(ndims))
+        if ndims==1:
+            lls = np.zeros((psd.shape[0], n_features), dtype=float)
+            n_fft = self.shape[0]
+            n_stage = int(np.round(np.log2(n_fft))) + 1
+            idx = 0
+            for i in range(n_stage):
+                n_channels = 2 ** (i)
+                n_features_c = int(n_fft/n_channels)
+                for j in range(n_features_c):
+                    S_size = n_channels
+                    S_mean = np.mean(psd[:, j*n_channels:(j+1)*n_channels], axis=1)
+                    ll = S_size * ((S_mean-1)-np.log(S_mean))
+                    lls[:, idx] = ll
+                    idx += 1
+        else:
+            raise NotImplementedError("Not implemented for ndims={}".format(ndims))
+
+        return lls
+    
+
     def __len__(self):
         return len(self.data)
     
@@ -87,8 +119,10 @@ class NumpyDataset(Dataset):
         return n_zeros / n_ones
     
 
-    def _transform(self, data, min=0, max=1, mean=0, std=1, norm_mode='std'):
+    def _transform(self, data, unsqueeze=True, min=0, max=1, mean=0, std=1, norm_mode='std'):
         if self.mask_mode=='channels':
+            unsqueeze = False
+        if not unsqueeze:
             data_t = torch.tensor(data, dtype=torch.float32)
         else:
             data_t = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
@@ -104,18 +138,18 @@ class NumpyDataset(Dataset):
     def __getitem__(self, idx):
         data = self.data[idx]
         mask = self.masks[idx]
-        data = self._transform(data)
-        mask = self._transform(mask)
+        data = self._transform(data, unsqueeze=True)
+        mask = self._transform(mask, unsqueeze=True)
         
-        if self.mode=='segmentation':
+        if self.problem_mode=='segmentation':
             return data, (mask,)
-        elif self.mode=='detection':
+        elif self.problem_mode=='detection':
             bbox = self.bboxes[idx]
             objectness = self.objectnesses[idx]
             classes = self.classes[idx]
-            bbox = self._transform(bbox)
-            objectness = self._transform(objectness)
-            classes = self._transform(classes)
+            bbox = self._transform(bbox, unsqueeze=False)
+            objectness = self._transform(objectness, unsqueeze=False)
+            classes = self._transform(classes, unsqueeze=False)
             return data, (mask, bbox, objectness, classes)
 
 
@@ -135,6 +169,73 @@ class BinarizeSTE(torch.autograd.Function):
         grad_input[input < 0.0] = 0.0
         grad_input[input > 1.0] = 0.0
         return grad_input, None
+
+
+class SimpleNNWithPreprocessing(nn.Module):
+    def __init__(self, shape=(1024,), n_classes=1):
+        super(SimpleNNWithPreprocessing, self).__init__()
+
+        self.shape = shape
+        self.n_classes = n_classes
+        ndims = len(self.shape)
+        if ndims==1:
+            self.n_features = 2*self.shape[0]-1
+        else:
+            raise NotImplementedError("Not implemented for ndims={}".format(ndims))
+
+        # self.fc_bbox = nn.Linear(self.n_features, 2*len(self.shape) * self.n_classes)
+        self.fc_bbox = nn.Sequential(
+                nn.Conv1d(1, 10, kernel_size=11, padding=5),
+                # nn.BatchNorm1d(num_features=10),
+                nn.ReLU(),
+                nn.Conv1d(10, 10, kernel_size=5, padding=2),
+                # nn.BatchNorm1d(num_features=10),
+                nn.ReLU(),
+                nn.Flatten(start_dim=1),
+                nn.Linear(10*self.n_features, self.n_features),
+                # nn.BatchNorm1d(num_features=1),
+                nn.ReLU(),
+                # nn.Linear(self.n_features, self.n_features//2),
+                # nn.BatchNorm1d(num_features=1),
+                # nn.ReLU(),
+                nn.Linear(self.n_features, 2*len(self.shape) * self.n_classes),
+                # nn.BatchNorm1d(num_features=1),
+                # nn.ReLU(),
+                # nn.Sigmoid(),
+                )
+        # self.fc_obj = nn.Linear(self.n_features, self.n_classes)
+        self.fc_obj = nn.Sequential(
+                nn.Conv1d(1, 10, kernel_size=11, padding=5),
+                # nn.BatchNorm1d(num_features=10),
+                nn.ReLU(),
+                nn.Conv1d(10, 10, kernel_size=5, padding=2),
+                # nn.BatchNorm1d(num_features=10),
+                nn.ReLU(),
+                nn.Flatten(start_dim=1),
+                nn.Linear(10*self.n_features, self.n_features),
+                # nn.BatchNorm1d(num_features=1),
+                nn.ReLU(),
+                # nn.Linear(self.n_features, self.n_features//2),
+                # nn.BatchNorm1d(num_features=1),
+                # nn.ReLU(),
+                nn.Linear(self.n_features, self.n_classes),
+                # nn.BatchNorm1d(num_features=1),
+                # nn.ReLU(),
+                # nn.Sigmoid(),
+                )
+        # self.fc_class = nn.Linear(self.n_features, self.n_classes)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+        self.flatten = nn.Flatten(start_dim=2)
+
+
+    def forward(self, x):
+        x_flat = self.flatten(x)
+        bboxes  = self.fc_bbox(x_flat)
+        objectnesses = self.fc_obj(x_flat)
+        class_probs = None
+    
+        return (bboxes, objectnesses, class_probs)
     
 
 
@@ -205,11 +306,6 @@ class UNet(nn.Module):
         self.out_conv = Conv(in_channels=2, out_channels=self.n_out_channels, kernel_size=1)
         self.sigmoid = nn.Sigmoid()
 
-        # self.fc_bbox = nn.Linear(int(np.prod(self.shape)), 2*len(self.shape) * self.n_classes)
-        # self.fc_obj = nn.Linear(int(np.prod(self.shape)), self.n_classes)
-        # self.fc_class = nn.Linear(int(np.prod(self.shape)), self.n_classes)
-
-
     def forward(self, x):
         enc = []
         dec = []
@@ -230,18 +326,6 @@ class UNet(nn.Module):
         output = self.out_conv(dec[-1])
         # output = self.sigmoid(self.out_conv(dec[-1]))
         return (output,)
-    
-        # if self.mode=='segmentation':
-        #     return (output,)
-        
-        # elif self.mode=='detection':
-        #     output_flat = torch.flatten(output, start_dim=2)
-        #     bboxes  = self.fc_bbox(output_flat)
-        #     objectnesses = self.fc_obj(output_flat)
-        #     # class_probs = self.fc_class(output_flat)
-        #     class_probs = None
-        
-        #     return (bboxes, objectnesses, class_probs)
 
 
 class UNetDetectionHead(nn.Module):
@@ -254,18 +338,43 @@ class UNetDetectionHead(nn.Module):
 
         # self.fc_bbox = nn.Linear(int(np.prod(self.shape)), 2*len(self.shape) * self.n_classes)
         self.fc_bbox = nn.Sequential(
-                nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//100),
+                nn.Conv1d(1, 5, kernel_size=3, padding=1),
                 nn.ReLU(),
-                nn.Linear(int(np.prod(self.shape))//100, 2*len(self.shape) * self.n_classes))
+                # nn.Conv1d(5, 5, kernel_size=3, padding=1),
+                # nn.ReLU(),
+                nn.Conv1d(5, 5, kernel_size=1, padding=0),
+                nn.ReLU(),
+                nn.Flatten(start_dim=1),
+                nn.Linear(5*int(np.prod(self.shape)), int(np.prod(self.shape))),
+                nn.ReLU(),
+                nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//2),
+                nn.ReLU(),
+                nn.Linear(int(np.prod(self.shape))//2, 2*len(self.shape) * self.n_classes),
+                # nn.ReLU(),
+                # nn.Sigmoid(),
+                )
         # self.fc_obj = nn.Linear(int(np.prod(self.shape)), self.n_classes)
         self.fc_obj = nn.Sequential(
-                nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//100),
+                nn.Conv1d(1, 5, kernel_size=3, padding=1),
                 nn.ReLU(),
-                nn.Linear(int(np.prod(self.shape))//100, self.n_classes))
+                # nn.Conv1d(5, 5, kernel_size=3, padding=1),
+                # nn.ReLU(),
+                nn.Conv1d(5, 5, kernel_size=1, padding=0),
+                nn.ReLU(),
+                nn.Flatten(start_dim=1),
+                nn.Linear(5*int(np.prod(self.shape)), int(np.prod(self.shape))),
+                nn.ReLU(),
+                nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//2),
+                nn.ReLU(),
+                nn.Linear(int(np.prod(self.shape))//2, self.n_classes),
+                # nn.ReLU(),
+                # nn.Sigmoid(),
+                )
         # self.fc_class = nn.Linear(int(np.prod(self.shape)), self.n_classes)
 
     def forward(self, x):
-        x_flat = torch.flatten(x, start_dim=2)
+        # x_flat = torch.flatten(x, start_dim=2)
+        x_flat = x
         bboxes  = self.fc_bbox(x_flat)
         objectnesses = self.fc_obj(x_flat)
         # class_probs = self.fc_class(x_flat)
@@ -300,12 +409,13 @@ class UNetWithDetectionHead(nn.Module):
         
     
 class ObjectDetectionLoss(nn.Module):
-    def __init__(self, shape=(1024,), lambda_start=1.0, lambda_length=1.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=1, eval_smooth=1e-6, mask_thr=0.0, gt_mask_thr=0.5):
+    def __init__(self, shape=(1024,), mode='mse', lambda_start=1.0, lambda_length=1.0, lambda_obj=1.0, lambda_class=1.0, n_sigs_max=1, eval_smooth=1e-6, mask_thr=0.0, gt_mask_thr=0.5):
         super(ObjectDetectionLoss, self).__init__()
         self.shape = shape
         self.n_sigs_max = n_sigs_max
         self.eval_smooth = eval_smooth
         self.mask_thr = mask_thr
+        self.mode = mode
         self.gt_mask_thr = gt_mask_thr
         self.lambda_start = lambda_start  # Weighting factor for the start of the bounding box
         self.lambda_length = lambda_length  # Weighting factor for the length of the bounding box
@@ -325,20 +435,19 @@ class ObjectDetectionLoss(nn.Module):
 
         # Class probability loss
         # class_loss = self.class_loss(pred_classes, gt_classes)
-        class_loss = 0
+        class_loss = 0.0
 
-
-        pred_objectness = (pred_objectness > self.mask_thr).float()
-        # pred_objectness = torch.sigmoid(pred_objectness)
         
         batch_size = pred_bbox.shape[0]
         pred_bbox = pred_bbox.reshape((batch_size, self.n_sigs_max, -1))
         gt_bbox = gt_bbox.reshape((batch_size, self.n_sigs_max, -1))
+
+        # pred_objectness = (pred_objectness > self.mask_thr).float()
+        pred_objectness = torch.sigmoid(pred_objectness)
         pred_objectness = pred_objectness.reshape((batch_size, self.n_sigs_max))
         gt_objectness = gt_objectness.reshape((batch_size, self.n_sigs_max))
-
-        pred_bbox *= pred_objectness[:,:,None]
-        gt_bbox *= gt_objectness[:,:,None]
+        # pred_bbox *= pred_objectness[:,:,None]
+        # gt_bbox *= gt_objectness[:,:,None]
 
         pred_starts = pred_bbox[:,:,:len(self.shape)]
         pred_lengths = pred_bbox[:,:,len(self.shape):]
@@ -347,27 +456,29 @@ class ObjectDetectionLoss(nn.Module):
         pred_stops = pred_starts + pred_lengths
         gt_stops = gt_starts + gt_lengths
 
-        # intersection_start = torch.max(pred_starts, gt_starts)
-        # intersection_stop = torch.min(pred_stops, gt_stops)
-        # intersection = intersection_stop-intersection_start
-        # # intersection = torch.clamp(intersection, min=0.0, max=1.0)
-        # intersection_size = torch.prod(intersection, dim=-1)
+        if self.mode=='iou':
+            intersection_start = torch.max(pred_starts, gt_starts)
+            intersection_stop = torch.min(pred_stops, gt_stops)
+            intersection = intersection_stop-intersection_start
+            # intersection = torch.clamp(intersection, min=0.0, max=1.0)
+            intersection_size = torch.prod(intersection, dim=-1)
 
-        # union_start = torch.min(pred_starts, gt_starts)
-        # union_stop = torch.max(pred_stops, gt_stops)
-        # union = union_stop-union_start
-        # # union = torch.clamp(union, min=0.0, max=1.0)
-        # union_size = torch.prod(union, dim=-1)
+            union_start = torch.min(pred_starts, gt_starts)
+            union_stop = torch.max(pred_stops, gt_stops)
+            union = union_stop-union_start
+            # union = torch.clamp(union, min=0.0, max=1.0)
+            union_size = torch.prod(union, dim=-1)
 
-        # iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
-        # # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
-        # bbox_start_loss = -iou
-        # bbox_length_loss = 0.0
+            iou = ((intersection_size+self.eval_smooth)/(union_size+self.eval_smooth)).mean()
+            # Use lambda_start=1.0 and lambda_obj=1.0 for this loss
 
-        # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
-        # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
-        bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
-        bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
+            bbox_start_loss = -iou
+            bbox_length_loss = 0.0
+        elif self.mode=='mse':
+            # Use lambda_start=10.0, lambda_length=1.0 and lambda_obj=1.0 for this loss
+            # bbox_loss = self.bbox_loss(pred_bbox, gt_bbox)
+            bbox_start_loss = self.bbox_loss(pred_starts, gt_starts)
+            bbox_length_loss = self.bbox_loss(pred_lengths, gt_lengths)
         
         # Total loss
         total_loss = self.lambda_start * bbox_start_loss + self.lambda_length * bbox_length_loss + self.lambda_obj * objectness_loss + self.lambda_class * class_loss
@@ -410,6 +521,7 @@ class ss_detection_Unet(object):
         self.norm_mode_data = params.norm_mode_data
         self.norm_mode_mask = params.norm_mode_mask
         self.norm_mode_bbox = params.norm_mode_bbox
+        self.obj_det_loss_mode=params.obj_det_loss_mode
         self.lambda_start=params.lambda_start
         self.lambda_length=params.lambda_length
         self.lambda_obj=params.lambda_obj
@@ -421,8 +533,10 @@ class ss_detection_Unet(object):
         self.train_mode = params.train_mode
         self.test = params.test
         self.load_model_params = params.load_model_params
+        self.save_model = params.save_model
         self.random_str = params.random_str
-        self.model_dir = params.model_dir
+        self.model_save_dir = params.model_save_dir
+        self.model_load_dir = params.model_load_dir
         self.model_name = params.model_name
         self.model_unet_name = params.model_unet_name
         self.figs_dir = params.figs_dir
@@ -451,9 +565,12 @@ class ss_detection_Unet(object):
         elif self.problem_mode == 'detection' and self.det_mode=='contours':
             self.model_dethead = None
             self.model = self.model_unet
-        elif self.problem_mode == 'detection' and self.det_mode=='nn':
+        elif self.problem_mode == 'detection' and self.det_mode=='nn-unet':
             self.model_dethead = UNetDetectionHead(shape=self.shape, dim=len(self.shape), n_classes=self.n_sigs_max)
             self.model = UNetWithDetectionHead(unet=self.model_unet, dethead=self.model_dethead, problem_mode=self.problem_mode, train_mode=self.train_mode, mask_thr=self.mask_thr)
+        elif self.problem_mode == 'detection' and self.det_mode=='nn-simple':
+            self.model_dethead = SimpleNNWithPreprocessing(shape=self.shape, n_classes=self.n_sigs_max)
+            self.model = self.model_dethead
         print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -469,11 +586,11 @@ class ss_detection_Unet(object):
 
     def load_model(self):
         if 'model' in self.load_model_params:
-            self.model.load_state_dict(torch.load(self.model_dir+self.model_name))
-            # self.model = torch.load(self.model_dir+self.model_name)
+            self.model.load_state_dict(torch.load(self.model_load_dir+self.model_name))
+            # self.model = torch.load(self.model_load_dir+self.model_name)
             print("Loaded Neural network model for the whole network.")
         if 'unet' in self.load_model_params:
-            self.model_unet.load_state_dict(torch.load(self.model_dir+self.model_unet_name))
+            self.model_unet.load_state_dict(torch.load(self.model_load_dir+self.model_unet_name))
             print("Loaded Neural network model for the U-net.")
         
 
@@ -497,17 +614,22 @@ class ss_detection_Unet(object):
                 self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
                 self.criterion_dethead = None
                 self.criterion = self.criterion_unet
-            elif self.problem_mode=='detection' and self.det_mode=='nn':
+            elif self.problem_mode=='detection' and self.det_mode=='nn-unet':
                 self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-                self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+                self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, mode=self.obj_det_loss_mode, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+                self.criterion = self.criterion_dethead
+            elif self.problem_mode=='detection' and self.det_mode=='nn-simple':
+                self.criterion_unet = None
+                self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, mode=self.obj_det_loss_mode, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
                 self.criterion = self.criterion_dethead
         elif self.mask_mode=='snr':
             self.criterion_unet = nn.MSELoss()
             self.criterion_dethead = None
             self.criterion = self.criterion_unet
         
-        self.optimizer_unet = optim.Adam(self.model_unet.parameters(), lr=self.lr)
-        self.scheduler_unet = optim.lr_scheduler.StepLR(self.optimizer_unet, step_size=self.sched_step_size, gamma=self.sched_gamma)
+        if self.model_unet is not None:
+            self.optimizer_unet = optim.Adam(self.model_unet.parameters(), lr=self.lr)
+            self.scheduler_unet = optim.lr_scheduler.StepLR(self.optimizer_unet, step_size=self.sched_step_size, gamma=self.sched_gamma)
         if self.model_dethead is not None:
             self.optimizer_dethead = optim.Adam(self.model_dethead.parameters(), lr=self.lr)
             self.scheduler_dethead = optim.lr_scheduler.StepLR(self.optimizer_dethead, step_size=self.sched_step_size, gamma=self.sched_gamma)
@@ -518,7 +640,7 @@ class ss_detection_Unet(object):
 
 
     def generate_data_loaders(self):
-        self.dataset = NumpyDataset(dataset_path=self.dataset_path, mode=self.problem_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
+        self.dataset = NumpyDataset(shape=self.shape, dataset_path=self.dataset_path, problem_mode=self.problem_mode, det_mode=self.det_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
         if self.apply_pos_weight:
             self.dataset_zeroone_ratio = self.dataset._get_masks_zeroone_ratio()
         else:
@@ -649,9 +771,9 @@ class ss_detection_Unet(object):
         if not isinstance(masks, np.ndarray):
             masks = masks.cpu().numpy()
 
-        bboxes_out = np.zeros((masks.shape[0], masks.shape[1], 2*len(self.shape)*self.n_sigs_max), dtype=float)
-        objectnesses_out = np.zeros((masks.shape[0], masks.shape[1], self.n_sigs_max), dtype=float)
-        classes_out = np.zeros((masks.shape[0], masks.shape[1], self.n_sigs_max), dtype=int)
+        bboxes_out = np.zeros((masks.shape[0], 2*len(self.shape)*self.n_sigs_max), dtype=float)
+        objectnesses_out = np.zeros((masks.shape[0], self.n_sigs_max), dtype=float)
+        classes_out = np.zeros((masks.shape[0], self.n_sigs_max), dtype=int)
 
         for batch_id, mask in enumerate(masks):
             for ch, mask_c in enumerate(mask):
@@ -705,12 +827,10 @@ class ss_detection_Unet(object):
                     bboxes = bboxes + [[0,0]] * (self.n_sigs_max - n_sigs)
                     objectnesses = [1.0] * n_sigs + [0.0] * (self.n_sigs_max - n_sigs)
                     classes = [0] * n_sigs + [-1] * (self.n_sigs_max - n_sigs)
-                
 
-                # return (bbox, objectness)
-                bboxes_out[batch_id, ch] = np.array(bboxes).flatten()
-                objectnesses_out[batch_id, ch] = np.array(objectnesses).flatten()
-                classes_out[batch_id, ch] = np.array(classes).flatten()
+            bboxes_out[batch_id] = np.array(bboxes).flatten()
+            objectnesses_out[batch_id] = np.array(objectnesses).flatten()
+            classes_out[batch_id] = np.array(classes).flatten()
 
         bboxes_out /= max(self.shape)
         bboxes_out = torch.tensor(bboxes_out, dtype=torch.float32).to(self.device)
@@ -734,8 +854,6 @@ class ss_detection_Unet(object):
         elif 'detection' in mode:
             (pred_bbox, pred_objectness, pred_classes) = pred
             (gt_bbox, gt_objectness, gt_classes) = target
-            # print(pred_bbox[:10])
-            # print(gt_bbox[:10])
 
             pred_objectness = (pred_objectness > self.mask_thr).float()
             # gt_objectness = (gt_objectness > self.gt_mask_thr).float()
@@ -747,6 +865,7 @@ class ss_detection_Unet(object):
             gt_objectness = gt_objectness.reshape((batch_size, self.n_sigs_max))
 
             pred_bbox *= pred_objectness[:,:,None]
+            # pred_bbox *= gt_objectness[:,:,None]
             gt_bbox *= gt_objectness[:,:,None]
             pred_bbox *= max(self.shape)
             gt_bbox *= max(self.shape)
@@ -812,7 +931,7 @@ class ss_detection_Unet(object):
                 if mode=='detection-contours':
                     output = (output>self.mask_thr).float()
                     output = self.extract_bbox_efficient(output, min_area=self.contours_min_area, max_gap=self.contours_max_gap)
-                if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')) or mode=='detection-unet':
+                if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')):
                     score += self.intersection_over_union(output, gt, mode=mode)
                 elif mode=='segmentation' and self.mask_mode=='snr':
                     score += F.mse_loss(output, gt).item()
@@ -851,7 +970,9 @@ class ss_detection_Unet(object):
                 self.train_model_one(mode='segmentation')
             elif self.problem_mode=='detection' and self.det_mode=='contours':
                 self.train_model_one(mode='detection-contours')
-            elif self.problem_mode=='detection' and self.det_mode=='nn':
+            elif self.problem_mode=='detection' and self.det_mode=='nn-simple':
+                self.train_model_one(mode='detection-simple')
+            elif self.problem_mode=='detection' and self.det_mode=='nn-unet':
                 if self.train_mode=='end2end':
                     self.train_model_one(mode='detection-end2end')
                 elif self.train_mode=='separate':
@@ -866,7 +987,7 @@ class ss_detection_Unet(object):
     def train_model_one(self, mode='segmentation'):
         if self.train:
             print("Beginning to train the Neural Network in mode: {}...".format(mode))
-            if mode=='segmentation' or mode=='detection-end2end' or mode=='detection-contours':
+            if mode=='segmentation' or mode=='detection-end2end' or mode=='detection-contours' or mode=='detection-simple':
                 model = self.model
                 name = ''
                 criterion = self.criterion
@@ -920,9 +1041,10 @@ class ss_detection_Unet(object):
                 # self.test_model(mode='test')
                 
                 if ((epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1) or (epoch+1 == n_epochs):
-                    torch.save(model.state_dict(), self.model_dir+self.random_str+name+'_weights_{}.pth'.format(epoch + 1))
-                    torch.save(model, self.model_dir+self.random_str+name+'_model_{}.pth'.format(epoch + 1))
-                    print("Saved the Neural Network's model")
+                    if self.save_model:
+                        torch.save(model.state_dict(), self.model_save_dir+self.random_str+name+'_weights_{}.pth'.format(epoch + 1))
+                        torch.save(model, self.model_save_dir+self.random_str+name+'_model_{}.pth'.format(epoch + 1))
+                        print("Saved the Neural Network's model")
                     self.test_acc = self.evaluate_model(model, self.test_loader, mode=mode)
                     print('Accuracy on test data: {}\n'.format(self.test_acc))
 
@@ -937,7 +1059,9 @@ class ss_detection_Unet(object):
                     eval_mode='segmentation'
                 elif self.problem_mode=='detection' and self.det_mode=='contours':
                     eval_mode='detection-contours'
-                elif self.problem_mode=='detection' and self.det_mode=='nn':
+                elif self.problem_mode=='detection' and self.det_mode=='nn-simple':
+                    eval_mode='detection-simple'
+                elif self.problem_mode=='detection' and self.det_mode=='nn-unet':
                     eval_mode='detection-end2end'
                 else:
                     eval_mode=eval_mode
