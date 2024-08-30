@@ -13,7 +13,7 @@ import cv2
 
 class NumpyDataset(Dataset):
 
-    def __init__(self, shape=(1024,), dataset_path=None, problem_mode='segmentation', det_mode=None, norm_mode_data='std', norm_mode_mask='none', norm_mode_bbox='len', mask_mode='binary'):
+    def __init__(self, shape=(1024,), dataset_path=None, problem_mode='segmentation', seg_mode='unet', det_mode=None, norm_mode_data='std', norm_mode_mask='none', norm_mode_bbox='len', mask_mode='binary'):
         dataset = np.load(dataset_path)
 
         self.data = dataset['data']
@@ -25,6 +25,7 @@ class NumpyDataset(Dataset):
         self.shape = shape
         self.problem_mode = problem_mode
         self.det_mode = det_mode
+        self.seg_mode = seg_mode
         self.norm_mode_data = norm_mode_data
         self.norm_mode_mask = norm_mode_mask
         self.norm_mode_bbox = norm_mode_bbox
@@ -33,9 +34,11 @@ class NumpyDataset(Dataset):
         # self.data_transform = data_transform
         # self.mask_transform = mask_transform
 
-        if self.problem_mode=='detection' and self.det_mode=='nn-simple':
+        if (self.problem_mode=='detection' and self.det_mode=='nn_features'):
             self.data = self.preprocess_llr(self.data)
 
+        if self.seg_mode=='threshold':
+            self.norm_mode_data = 'none'
 
         self.min_data = self.data.min()
         self.max_data = self.data.max()
@@ -177,109 +180,136 @@ class SimpleNNWithPreprocessing(nn.Module):
 
         self.shape = shape
         self.n_classes = n_classes
-        ndims = len(self.shape)
-        if ndims==1:
+        self.ndims = len(self.shape)
+        if self.ndims==1:
             self.n_features = 2*self.shape[0]-1
         else:
-            raise NotImplementedError("Not implemented for ndims={}".format(ndims))
+            raise NotImplementedError("Not implemented for ndims={}".format(self.ndims))
+        self.n_channels = 5
+        self.fc_scale = 2
+        
 
         # self.fc_bbox = nn.Linear(self.n_features, 2*len(self.shape) * self.n_classes)
         self.fc_bbox = nn.Sequential(
-                nn.Conv1d(1, 10, kernel_size=11, padding=5),
-                # nn.BatchNorm1d(num_features=10),
+                nn.Conv1d(1, self.n_channels, kernel_size=5, padding=2),
+                # nn.BatchNorm1d(num_features=self.n_channels),
                 nn.ReLU(),
-                nn.Conv1d(10, 10, kernel_size=5, padding=2),
-                # nn.BatchNorm1d(num_features=10),
+                # nn.Conv1d(self.n_channels, self.n_channels, kernel_size=3, padding=1),
+                # nn.BatchNorm1d(num_features=self.n_channels),
+                # nn.ReLU(),
+                nn.Conv1d(self.n_channels, self.n_channels, kernel_size=3, padding=1),
+                # nn.BatchNorm1d(num_features=self.n_channels),
                 nn.ReLU(),
                 nn.Flatten(start_dim=1),
-                nn.Linear(10*self.n_features, self.n_features),
+                nn.Linear(self.n_channels*self.n_features, self.n_features),
                 # nn.BatchNorm1d(num_features=1),
                 nn.ReLU(),
-                # nn.Linear(self.n_features, self.n_features//2),
+                nn.Linear(self.n_features, self.n_features//self.fc_scale),
                 # nn.BatchNorm1d(num_features=1),
+                nn.ReLU(),
+                # nn.Linear(self.n_features//self.fc_scale, self.n_features//self.fc_scale**2),
+                # # nn.BatchNorm1d(num_features=1),
                 # nn.ReLU(),
-                nn.Linear(self.n_features, 2*len(self.shape) * self.n_classes),
+                nn.Linear(self.n_features//self.fc_scale**1, 2*len(self.shape) * self.n_classes),
                 # nn.BatchNorm1d(num_features=1),
                 # nn.ReLU(),
                 # nn.Sigmoid(),
                 )
         # self.fc_obj = nn.Linear(self.n_features, self.n_classes)
         self.fc_obj = nn.Sequential(
-                nn.Conv1d(1, 10, kernel_size=11, padding=5),
-                # nn.BatchNorm1d(num_features=10),
+                nn.Conv1d(1, self.n_channels, kernel_size=5, padding=2),
+                # nn.BatchNorm1d(num_features=self.n_channels),
                 nn.ReLU(),
-                nn.Conv1d(10, 10, kernel_size=5, padding=2),
-                # nn.BatchNorm1d(num_features=10),
+                # nn.Conv1d(self.n_channels, self.n_channels, kernel_size=5, padding=2),
+                # nn.BatchNorm1d(num_features=self.n_channels),
+                # nn.ReLU(),
+                nn.Conv1d(self.n_channels, self.n_channels, kernel_size=3, padding=1),
+                # nn.BatchNorm1d(num_features=self.n_channels),
                 nn.ReLU(),
                 nn.Flatten(start_dim=1),
-                nn.Linear(10*self.n_features, self.n_features),
+                nn.Linear(self.n_channels*self.n_features, self.n_features),
                 # nn.BatchNorm1d(num_features=1),
                 nn.ReLU(),
-                # nn.Linear(self.n_features, self.n_features//2),
+                nn.Linear(self.n_features, self.n_features//self.fc_scale),
                 # nn.BatchNorm1d(num_features=1),
-                # nn.ReLU(),
-                nn.Linear(self.n_features, self.n_classes),
+                nn.ReLU(),
+                nn.Linear(self.n_features//self.fc_scale**1, self.n_classes),
                 # nn.BatchNorm1d(num_features=1),
                 # nn.ReLU(),
                 # nn.Sigmoid(),
                 )
         # self.fc_class = nn.Linear(self.n_features, self.n_classes)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-        self.flatten = nn.Flatten(start_dim=2)
-
 
     def forward(self, x):
-        x_flat = self.flatten(x)
+        x_flat = torch.flatten(x, start_dim=2)
         bboxes  = self.fc_bbox(x_flat)
         objectnesses = self.fc_obj(x_flat)
+        # class_probs = self.fc_class(x_flat)
         class_probs = None
     
         return (bboxes, objectnesses, class_probs)
     
 
+class ThresholdMasking(nn.Module):
+    def __init__(self, shape=(1024,)):
+        super(ThresholdMasking, self).__init__()
+
+        self.shape = shape
+        self.thr = nn.Parameter(torch.tensor(1.0))
+        self.thr.requires_grad = True
+
+        self.negative = -1000.0
+        self.positive = 1000.0
+        self.sharpness = 10.0
+
+    def forward(self, x):
+        # output = (x > self.thr).float()
+        # output = torch.where(x > self.thr, torch.full_like(x, self.positive), torch.full_like(x, self.negative))
+        output = torch.sigmoid(self.sharpness * (x - self.thr))
+        output = output * self.positive + (1-output) * self.negative
+        return (output,)
+    
+
 
 class UNet(nn.Module):
-    def __init__(self, shape=(1024,), n_layers=10, dim=1, n_out_channels=1, n_classes=1, mode='segmentation'):
+    def __init__(self, shape=(1024,), n_layers=10, n_out_channels=1):
         super(UNet, self).__init__()
 
         self.shape = shape
         self.n_layers = n_layers
-        self.dim = dim
+        self.ndims = len(self.shape)
         self.n_out_channels = n_out_channels
-        self.mode = mode
-        self.n_classes = n_classes
 
         def Conv(in_channels=2, out_channels=1, kernel_size=1, padding=0):
-            if self.dim == 1:
+            if self.ndims == 1:
                 return nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
-            elif self.dim == 2:
+            elif self.ndims == 2:
                 return nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
-            elif self.dim == 3:
+            elif self.ndims == 3:
                 return nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
         
         def ConvTranspose(in_channels=1, out_channels=1, kernel_size=2, stride=2):
-            if self.dim == 1:
+            if self.ndims == 1:
                 return nn.ConvTranspose1d(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
-            elif self.dim == 2:
+            elif self.ndims == 2:
                 return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
-            elif self.dim == 3:
+            elif self.ndims == 3:
                 return nn.ConvTranspose3d(in_channels, out_channels, kernel_size=kernel_size, stride=stride)
 
         def MaxPool(kernel_size=2):
-            if self.dim == 1:
+            if self.ndims == 1:
                 return nn.MaxPool1d(kernel_size=kernel_size)
-            elif self.dim == 2:
+            elif self.ndims == 2:
                 return nn.MaxPool2d(kernel_size=kernel_size)
-            elif self.dim == 3:
+            elif self.ndims == 3:
                 return nn.MaxPool3d(kernel_size=kernel_size)
 
         def BatchNorm(num_features=1):
-            if self.dim == 1:
+            if self.ndims == 1:
                 return nn.BatchNorm1d(num_features=num_features)
-            elif self.dim == 2:
+            elif self.ndims == 2:
                 return nn.BatchNorm2d(num_features=num_features)
-            elif self.dim == 3:
+            elif self.ndims == 3:
                 return nn.BatchNorm3d(num_features=num_features)
             
         def conv_block(in_channels=1, out_channels=1, kernel_size=3):
@@ -328,24 +358,25 @@ class UNet(nn.Module):
         return (output,)
 
 
-class UNetDetectionHead(nn.Module):
-    def __init__(self, shape=(1024,), dim=1, n_classes=1):
-        super(UNetDetectionHead, self).__init__()
+class SegNetDetectionHead(nn.Module):
+    def __init__(self, shape=(1024,), n_classes=1):
+        super(SegNetDetectionHead, self).__init__()
 
         self.shape = shape
-        self.dim = dim
+        self.ndims = len(self.shape)
         self.n_classes = n_classes
+        self.n_channels = 5
 
         # self.fc_bbox = nn.Linear(int(np.prod(self.shape)), 2*len(self.shape) * self.n_classes)
         self.fc_bbox = nn.Sequential(
-                nn.Conv1d(1, 5, kernel_size=3, padding=1),
+                nn.Conv1d(1, self.n_channels, kernel_size=3, padding=1),
                 nn.ReLU(),
-                # nn.Conv1d(5, 5, kernel_size=3, padding=1),
+                # nn.Conv1d(self.n_channels, self.n_channels, kernel_size=3, padding=1),
                 # nn.ReLU(),
-                nn.Conv1d(5, 5, kernel_size=1, padding=0),
+                nn.Conv1d(self.n_channels, self.n_channels, kernel_size=1, padding=0),
                 nn.ReLU(),
                 nn.Flatten(start_dim=1),
-                nn.Linear(5*int(np.prod(self.shape)), int(np.prod(self.shape))),
+                nn.Linear(self.n_channels*int(np.prod(self.shape)), int(np.prod(self.shape))),
                 nn.ReLU(),
                 nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//2),
                 nn.ReLU(),
@@ -355,14 +386,14 @@ class UNetDetectionHead(nn.Module):
                 )
         # self.fc_obj = nn.Linear(int(np.prod(self.shape)), self.n_classes)
         self.fc_obj = nn.Sequential(
-                nn.Conv1d(1, 5, kernel_size=3, padding=1),
+                nn.Conv1d(1, self.n_channels, kernel_size=3, padding=1),
                 nn.ReLU(),
-                # nn.Conv1d(5, 5, kernel_size=3, padding=1),
+                # nn.Conv1d(self.n_channels, self.n_channels, kernel_size=3, padding=1),
                 # nn.ReLU(),
-                nn.Conv1d(5, 5, kernel_size=1, padding=0),
+                nn.Conv1d(self.n_channels, self.n_channels, kernel_size=1, padding=0),
                 nn.ReLU(),
                 nn.Flatten(start_dim=1),
-                nn.Linear(5*int(np.prod(self.shape)), int(np.prod(self.shape))),
+                nn.Linear(self.n_channels*int(np.prod(self.shape)), int(np.prod(self.shape))),
                 nn.ReLU(),
                 nn.Linear(int(np.prod(self.shape)), int(np.prod(self.shape))//2),
                 nn.ReLU(),
@@ -373,8 +404,7 @@ class UNetDetectionHead(nn.Module):
         # self.fc_class = nn.Linear(int(np.prod(self.shape)), self.n_classes)
 
     def forward(self, x):
-        # x_flat = torch.flatten(x, start_dim=2)
-        x_flat = x
+        x_flat = torch.flatten(x, start_dim=2)
         bboxes  = self.fc_bbox(x_flat)
         objectnesses = self.fc_obj(x_flat)
         # class_probs = self.fc_class(x_flat)
@@ -383,11 +413,10 @@ class UNetDetectionHead(nn.Module):
         return (bboxes, objectnesses, class_probs)
     
 
-
-class UNetWithDetectionHead(nn.Module):
-    def __init__(self, unet, dethead, problem_mode='detection', train_mode='end2end', mask_thr=0.0):
-        super(UNetWithDetectionHead, self).__init__()
-        self.unet = unet
+class SegNetWithDetectionHead(nn.Module):
+    def __init__(self, segnet, dethead, problem_mode='detection', train_mode='end2end', mask_thr=0.0):
+        super(SegNetWithDetectionHead, self).__init__()
+        self.segnet = segnet
         self.dethead = dethead
         self.problem_mode = problem_mode
         self.train_mode = train_mode
@@ -395,12 +424,12 @@ class UNetWithDetectionHead(nn.Module):
 
     def forward(self, x):
         if self.train_mode=='end2end':
-            mask = self.unet(x)[0]
+            mask = self.segnet(x)[0]
             # mask = torch.sigmoid(mask)
             mask = (mask > self.mask_thr).float()
         elif self.train_mode=='separate':
             with torch.no_grad():
-                mask = self.unet(x)[0]
+                mask = self.segnet(x)[0]
                 # mask = torch.sigmoid(mask)
                 mask = (mask > self.mask_thr).float()
         det_output = self.dethead(mask)
@@ -514,7 +543,7 @@ class ss_detection_Unet(object):
         self.sched_gamma = params.sched_gamma
         self.sched_step_size = params.sched_step_size
         self.n_epochs_tot = params.n_epochs_tot
-        self.n_epochs_unet = params.n_epochs_unet
+        self.n_epochs_seg = params.n_epochs_seg
         self.n_epochs_dethead = params.n_epochs_dethead
         self.nepoch_save = params.nepoch_save
         self.nbatch_log = params.nbatch_log
@@ -531,6 +560,7 @@ class ss_detection_Unet(object):
         self.train = params.train
         self.det_mode = params.det_mode
         self.train_mode = params.train_mode
+        self.seg_mode = params.seg_mode
         self.test = params.test
         self.load_model_params = params.load_model_params
         self.save_model = params.save_model
@@ -538,7 +568,7 @@ class ss_detection_Unet(object):
         self.model_save_dir = params.model_save_dir
         self.model_load_dir = params.model_load_dir
         self.model_name = params.model_name
-        self.model_unet_name = params.model_unet_name
+        self.model_seg_name = params.model_seg_name
         self.figs_dir = params.figs_dir
 
         self.data_transform = transforms.Compose([
@@ -558,25 +588,45 @@ class ss_detection_Unet(object):
         else:
             n_out_channels = 1
 
-        self.model_unet = UNet(shape=self.shape, n_layers=self.n_layers, dim=len(self.shape), n_out_channels=n_out_channels, n_classes=self.n_sigs_max, mode=self.problem_mode)
-        if self.problem_mode == 'segmentation':
+        if self.seg_mode=='unet':
+            self.model_seg = UNet(shape=self.shape, n_layers=self.n_layers, n_out_channels=n_out_channels, n_classes=self.n_sigs_max, mode=self.problem_mode)
+        elif self.seg_mode=='threshold':
+            self.model_seg = ThresholdMasking(shape=self.shape)
+        else:
+            self.model_seg = None
+            # raise NotImplementedError("Not implemented for seg_mode={}".format(self.seg_mode))
+        
+        if self.det_mode=='contours':
             self.model_dethead = None
-            self.model = self.model_unet
-        elif self.problem_mode == 'detection' and self.det_mode=='contours':
-            self.model_dethead = None
-            self.model = self.model_unet
-        elif self.problem_mode == 'detection' and self.det_mode=='nn-unet':
-            self.model_dethead = UNetDetectionHead(shape=self.shape, dim=len(self.shape), n_classes=self.n_sigs_max)
-            self.model = UNetWithDetectionHead(unet=self.model_unet, dethead=self.model_dethead, problem_mode=self.problem_mode, train_mode=self.train_mode, mask_thr=self.mask_thr)
-        elif self.problem_mode == 'detection' and self.det_mode=='nn-simple':
+        elif self.det_mode=='nn_segnet':
+            self.model_dethead = SegNetDetectionHead(shape=self.shape, n_classes=self.n_sigs_max)
+        elif self.det_mode=='nn_features':
             self.model_dethead = SimpleNNWithPreprocessing(shape=self.shape, n_classes=self.n_sigs_max)
-            self.model = self.model_dethead
+        else:
+            self.model_dethead = None
+            # raise NotImplementedError("Not implemented for det_mode={}".format(self.det_mode))
+
+        if self.problem_mode == 'segmentation':
+            self.model = self.model_seg
+        elif self.problem_mode == 'detection':
+            if self.det_mode=='contours':
+                self.model = self.model_seg
+            elif self.det_mode=='nn_segnet':
+                self.model = SegNetWithDetectionHead(unet=self.model_seg, dethead=self.model_dethead, problem_mode=self.problem_mode, train_mode=self.train_mode, mask_thr=self.mask_thr)
+            elif self.det_mode=='nn_features':
+                self.model = self.model_dethead
+            else:
+                self.model = None
+        else:
+            self.model = None
+
         print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)))
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print('Unet device: {}'.format(self.device))
+        print('Torch device: {}'.format(self.device))
         
-        self.model_unet.to(self.device)
+        if self.model_seg is not None:
+            self.model_seg.to(self.device)
         if self.model_dethead is not None:
             self.model_dethead.to(self.device)
         self.model.to(self.device)
@@ -589,8 +639,8 @@ class ss_detection_Unet(object):
             self.model.load_state_dict(torch.load(self.model_load_dir+self.model_name))
             # self.model = torch.load(self.model_load_dir+self.model_name)
             print("Loaded Neural network model for the whole network.")
-        if 'unet' in self.load_model_params:
-            self.model_unet.load_state_dict(torch.load(self.model_load_dir+self.model_unet_name))
+        if 'seg' in self.load_model_params:
+            self.model_seg.load_state_dict(torch.load(self.model_load_dir+self.model_seg_name))
             print("Loaded Neural network model for the U-net.")
         
 
@@ -599,37 +649,43 @@ class ss_detection_Unet(object):
 
 
     def load_optimizer(self):
+        
         if self.mask_mode=='binary' or self.mask_mode=='channels':
             if self.apply_pos_weight:
                 pos_weight=torch.tensor([self.dataset_zeroone_ratio]).to(self.device)
                 print("Applied pos_weight to the loss function: {}".format(pos_weight))
             else:
                 pos_weight=None
+
+            obj_det_loss = ObjectDetectionLoss(shape=self.shape, mode=self.obj_det_loss_mode, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+            seg_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            
             if self.problem_mode=='segmentation':
-                self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-                # self.criterion_unet = nn.BCELoss()
+                self.criterion_seg = seg_loss
+                # self.criterion_seg = nn.BCELoss()
                 self.criterion_dethead = None
-                self.criterion = self.criterion_unet
+                self.criterion = self.criterion_seg
             elif self.problem_mode=='detection' and self.det_mode=='contours':
-                self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+                self.criterion_seg = seg_loss
                 self.criterion_dethead = None
-                self.criterion = self.criterion_unet
-            elif self.problem_mode=='detection' and self.det_mode=='nn-unet':
-                self.criterion_unet = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-                self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, mode=self.obj_det_loss_mode, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+                self.criterion = self.criterion_seg
+            elif self.problem_mode=='detection' and self.det_mode=='nn_segnet':
+                self.criterion_seg = seg_loss
+                self.criterion_dethead = obj_det_loss
                 self.criterion = self.criterion_dethead
-            elif self.problem_mode=='detection' and self.det_mode=='nn-simple':
-                self.criterion_unet = None
-                self.criterion_dethead = ObjectDetectionLoss(shape=self.shape, mode=self.obj_det_loss_mode, lambda_start=self.lambda_start, lambda_length=self.lambda_length, lambda_obj=self.lambda_obj, lambda_class=self.lambda_class, n_sigs_max=self.n_sigs_max, eval_smooth=self.eval_smooth, mask_thr=self.mask_thr, gt_mask_thr=self.gt_mask_thr)
+            elif self.problem_mode=='detection' and self.det_mode=='nn_features':
+                self.criterion_seg = None
+                self.criterion_dethead = obj_det_loss
                 self.criterion = self.criterion_dethead
         elif self.mask_mode=='snr':
-            self.criterion_unet = nn.MSELoss()
+            mse_loss = nn.MSELoss()
+            self.criterion_seg = mse_loss
             self.criterion_dethead = None
-            self.criterion = self.criterion_unet
+            self.criterion = self.criterion_seg
         
-        if self.model_unet is not None:
-            self.optimizer_unet = optim.Adam(self.model_unet.parameters(), lr=self.lr)
-            self.scheduler_unet = optim.lr_scheduler.StepLR(self.optimizer_unet, step_size=self.sched_step_size, gamma=self.sched_gamma)
+        if self.model_seg is not None:
+            self.optimizer_seg = optim.Adam(self.model_seg.parameters(), lr=self.lr)
+            self.scheduler_seg = optim.lr_scheduler.StepLR(self.optimizer_seg, step_size=self.sched_step_size, gamma=self.sched_gamma)
         if self.model_dethead is not None:
             self.optimizer_dethead = optim.Adam(self.model_dethead.parameters(), lr=self.lr)
             self.scheduler_dethead = optim.lr_scheduler.StepLR(self.optimizer_dethead, step_size=self.sched_step_size, gamma=self.sched_gamma)
@@ -840,7 +896,7 @@ class ss_detection_Unet(object):
 
 
     def intersection_over_union(self, pred, target, mode='segmentation'):
-        if mode=='segmentation' or mode=='detection-unet':
+        if mode=='segmentation' or mode=='detection_seg':
             pred_c = pred > self.mask_thr
             target_c = target > self.gt_mask_thr
             # target_c = target
@@ -921,14 +977,14 @@ class ss_detection_Unet(object):
                 if len(gt)==1:
                     gt = gt[0]
                 else:
-                    if mode=='detection-unet':
+                    if mode=='detection_seg':
                         gt = gt[0]
                     else:
                         gt = gt[1:]
                 output = model(data)
                 if len(output)==1:
                     output = output[0]
-                if mode=='detection-contours':
+                if mode=='detection_contours':
                     output = (output>self.mask_thr).float()
                     output = self.extract_bbox_efficient(output, min_area=self.contours_min_area, max_gap=self.contours_max_gap)
                 if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')):
@@ -969,39 +1025,39 @@ class ss_detection_Unet(object):
             if self.problem_mode=='segmentation':
                 self.train_model_one(mode='segmentation')
             elif self.problem_mode=='detection' and self.det_mode=='contours':
-                self.train_model_one(mode='detection-contours')
-            elif self.problem_mode=='detection' and self.det_mode=='nn-simple':
-                self.train_model_one(mode='detection-simple')
-            elif self.problem_mode=='detection' and self.det_mode=='nn-unet':
+                self.train_model_one(mode='detection_contours')
+            elif self.problem_mode=='detection' and self.det_mode=='nn_features':
+                self.train_model_one(mode='detection_features')
+            elif self.problem_mode=='detection' and self.det_mode=='nn_segnet':
                 if self.train_mode=='end2end':
-                    self.train_model_one(mode='detection-end2end')
+                    self.train_model_one(mode='detection_end2end')
                 elif self.train_mode=='separate':
-                    self.train_model_one(mode='detection-unet')
-                    for param in self.model_unet.parameters():
+                    self.train_model_one(mode='detection_seg')
+                    for param in self.model_seg.parameters():
                         param.requires_grad = False
-                    for param in self.model.unet.parameters():
+                    for param in self.model.segnet.parameters():
                         param.requires_grad = False
-                    self.train_model_one(mode='detection-dethead')
+                    self.train_model_one(mode='detection_dethead')
 
 
     def train_model_one(self, mode='segmentation'):
         if self.train:
             print("Beginning to train the Neural Network in mode: {}...".format(mode))
-            if mode=='segmentation' or mode=='detection-end2end' or mode=='detection-contours' or mode=='detection-simple':
+            if mode=='segmentation' or mode=='detection_end2end' or mode=='detection_contours' or mode=='detection_features':
                 model = self.model
                 name = ''
                 criterion = self.criterion
                 optimizer = self.optimizer
                 scheduler = self.scheduler
                 n_epochs = self.n_epochs_tot
-            elif mode=='detection-unet':
-                model = self.model_unet
-                name = '_unet'
-                criterion = self.criterion_unet
-                optimizer = self.optimizer_unet
-                scheduler = self.scheduler_unet
-                n_epochs = self.n_epochs_unet
-            elif mode=='detection-dethead':
+            elif mode=='detection_seg':
+                model = self.model_seg
+                name = '_seg'
+                criterion = self.criterion_seg
+                optimizer = self.optimizer_seg
+                scheduler = self.scheduler_seg
+                n_epochs = self.n_epochs_seg
+            elif mode=='detection_dethead':
                 model = self.model
                 name = ''
                 criterion = self.criterion_dethead
@@ -1020,7 +1076,7 @@ class ss_detection_Unet(object):
                     if len(gt)==1:
                         gt = gt[0]
                     else:
-                        if mode=='detection-unet' or mode=='detection-contours':
+                        if mode=='detection_seg' or mode=='detection_contours':
                             gt = gt[0]
                         else:
                             gt = gt[1:]
@@ -1058,11 +1114,11 @@ class ss_detection_Unet(object):
                 if self.problem_mode=='segmentation':
                     eval_mode='segmentation'
                 elif self.problem_mode=='detection' and self.det_mode=='contours':
-                    eval_mode='detection-contours'
-                elif self.problem_mode=='detection' and self.det_mode=='nn-simple':
-                    eval_mode='detection-simple'
-                elif self.problem_mode=='detection' and self.det_mode=='nn-unet':
-                    eval_mode='detection-end2end'
+                    eval_mode='detection_contours'
+                elif self.problem_mode=='detection' and self.det_mode=='nn_features':
+                    eval_mode='detection_features'
+                elif self.problem_mode=='detection' and self.det_mode=='nn_segnet':
+                    eval_mode='detection_end2end'
                 else:
                     eval_mode=eval_mode
             else:

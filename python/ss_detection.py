@@ -8,6 +8,8 @@ import itertools
 from scipy.stats import chi2
 import torch
 import heapq
+import datetime
+import subprocess
 
 
 
@@ -29,6 +31,20 @@ class specsense_detection(object):
         print('specsense_detection device: {}'.format(self.device))
 
         print("Initialized Spectrum Sensing class instance.")
+
+
+    def print_info(self):
+        now = datetime.datetime.now()
+        current_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
+        # Get the latest Git commit ID
+        try:
+            latest_commit_id = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode('utf-8')
+        except subprocess.CalledProcessError:
+            latest_commit_id = "No Git repository found or Git command failed."
+
+        # Print the formatted date, time, and latest commit ID
+        print(f"Current Date and Time: {current_datetime}")
+        print(f"Latest Git Commit ID: {latest_commit_id}")
 
 
     def plot_MD_vs_SNR(self, snr_min=0.1, snr_max=100.0, n_points=1000, dof_min=1, dof_max=1024, n_dof=11, p_fa=1e-6):
@@ -546,7 +562,7 @@ class specsense_detection(object):
     
 
     def sweep_snrs(self, snrs, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None, mode='simple'):
-        print("Starting to sweep ML detector on SNRs...")
+        print("Starting to sweep ML detector on SNRs for n_sigs:{}-{}, sig_size: {}-{}...".format(n_sigs_min, n_sigs_max, sig_size_min, sig_size_max))
         
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         det_rate = {}
@@ -576,7 +592,7 @@ class specsense_detection(object):
 
     
     def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, snr_range=np.array([10,10]), mode='simple'):
-        print("Starting to sweep ML detector on Signal sizes...")
+        print("Starting to sweep ML detector on Signal sizes for n_sigs:{}={}, snr_range:{}...".format(n_sigs_min, n_sigs_max, snr_range))
         
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         det_rate = {}
@@ -638,35 +654,46 @@ class specsense_detection(object):
         return ''.join(random.choice(letters) for i in range(length))
 
 
-    def plot(self, plot_dic):
+    def plot(self, plot_dic, mode='snr'):
+        plot_dic = {key: plot_dic[key] for key in list(plot_dic.keys()) if mode in key}
+
         colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
-        plt.figure()
+        fixed_param_len = len(list(plot_dic[list(plot_dic.keys())[0]].keys()))
+        fig, axes = plt.subplots(1, fixed_param_len, figsize=(fixed_param_len*5, 5), sharey=True)
+
         for i, plot_name in enumerate(list(plot_dic.keys())):
+            for j, fixed_param in enumerate(list(plot_dic[plot_name].keys())):
+                if 'snr' in plot_name:
+                    x = [float(i) for i in list(plot_dic[plot_name][fixed_param].keys())]
+                    param_name = 'SNR'
+                    file_name = 'ss_sw_snr'
+                    fixed_param_name = 'Interval Size'
+                elif 'size' in plot_name:
+                    x = [float(item[0]) for item in list(plot_dic[plot_name][fixed_param].keys())]
+                    param_name = 'Interval Size'
+                    file_name = 'ss_sw_size'
+                    fixed_param_name = 'SNR'
 
-            if 'snr' in plot_name:
-                x = [float(i) for i in list(plot_dic[plot_name].keys())]
-                param_name = 'SNR'
-                file_name = 'ss_sw_snr'
-            elif 'size' in plot_name:
-                x = [float(item[0]) for item in list(plot_dic[plot_name].keys())]
-                param_name = 'Interval Size'
-                file_name = 'ss_sw_size'
+                if 'ML' in plot_name:
+                    if 'binary' in plot_name:
+                        method = 'Maximum Likelihood Binary Search'
+                    else:
+                        method = 'Maximum Likelihood'
+                elif 'NN' in plot_name:
+                    method = 'U-Net'
 
-            if 'ML' in plot_name:
-                if 'binary' in plot_name:
-                    method = 'Maximum Likelihood Binary Search'
-                else:
-                    method = 'Maximum Likelihood'
-            elif 'NN' in plot_name:
-                method = 'U-Net'
+                det_err = 1-np.array(list(plot_dic[plot_name][fixed_param].values()))
+                axes[j].semilogx(x, det_err, 'o-', color=colors[i], label=method)
+                # plt.yscale('log')
+                axes[j].set_title('{} = {}'.format(fixed_param_name, fixed_param))
+                axes[j].set_xlabel('{} (Logarithmic)'.format(param_name))
+                axes[j].set_ylabel('Error Rate')
+                axes[j].legend()
+                axes[j].grid(True)
 
-            det_err = 1-np.array(list(plot_dic[plot_name].values()))
-            plt.semilogx(x, det_err, 'o-', color=colors[i], label=method)
+
         
-        plt.title('Detector Error Rate vs {}'.format(param_name))
-        plt.xlabel('{} (Logarithmic)'.format(param_name))
-        plt.ylabel('Error Rate')
-        plt.legend()
+        fig.suptitle('Detector Error Rate vs {} for different {}s'.format(param_name, fixed_param_name))
         plt.savefig(self.figs_dir + '{}.pdf'.format(file_name), format='pdf')
         plt.show()
 
