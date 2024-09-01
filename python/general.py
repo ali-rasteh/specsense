@@ -30,6 +30,7 @@ class general(object):
     def gen_random_str(self, length=6):
         letters = string.ascii_letters + string.digits
         self.random_str = ''.join(random.choice(letters) for i in range(length))
+        print("Random string for this run: {}".format(self.random_str))
         return self.random_str
 
 
@@ -50,6 +51,14 @@ class general(object):
     def init_device_torch(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print('Torch device: {}'.format(self.device))
+
+
+    def print_params(self, params):
+        print("Run parameters:")
+        for attr in dir(params):
+            if not callable(getattr(params, attr)) and not attr.startswith("__"):
+                print(f"{attr} = {getattr(params, attr)}")
+        print('\n')
 
 
     def plt_plot(self, *args, **kwargs):

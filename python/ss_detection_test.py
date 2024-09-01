@@ -54,8 +54,8 @@ class params_class(object):
         self.lr=1e-2
         self.n_epochs_tot=50
         self.n_epochs_seg=50
-        self.train=False
-        self.test=False
+        self.train=True
+        self.test=True
         self.load_model_params=[]        # List of model parameters to load, seg and model
         self.save_model=False
         self.model_name='IcKI7w_weights_50.pth'
@@ -137,16 +137,9 @@ class params_class(object):
 if __name__ == '__main__':
 
     params = params_class()
-    print("Run parameters:")
-    for attr in dir(params):
-        if not callable(getattr(params, attr)) and not attr.startswith("__"):
-            print(f"{attr} = {getattr(params, attr)}")
-    print('\n')    
-
-
     ss_det = specsense_detection(params)
+    ss_det.print_params(params)
     params.random_str = ss_det.gen_random_str()
-    print("Random string for this run: {}".format(params.random_str))
     ss_det.print_info()
     ss_det.plot_MD_vs_SNR()
     ss_det.plot_MD_vs_DoF()

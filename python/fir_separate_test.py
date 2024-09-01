@@ -8,13 +8,13 @@ import_torch = False
 
 
 def run_sim(params):
-    print("Run parameters:")
-    for attr in dir(params):
-        if not callable(getattr(params, attr)) and not attr.startswith("__"):
-            print(f"{attr} = {getattr(params, attr)}")
-    print('\n')
+    
 
     fir_separate_ins = fir_separate(params)
+    fir_separate_ins.print_params(params)
+    params.random_str = fir_separate_ins.gen_random_str()
+    fir_separate_ins.print_info()
+    
     if params.use_cupy and params.import_cupy:
         fir_separate_ins.check_gpu_usage()
         fir_separate_ins.print_gpu_memory()
