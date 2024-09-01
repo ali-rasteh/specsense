@@ -1,50 +1,23 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from numpy.random import randn, rand, randint, choice, exponential, uniform
-from filter_utils import *
-import string
-import random
-import itertools
-from scipy.stats import chi2
-import torch
-import heapq
-import datetime
-import subprocess
+from backend import *
+from backend import be_np as np, be_scp as scipy
+from signal_utils import signals
 
 
 
-class specsense_detection(object):
+
+
+class specsense_detection(signals):
     def __init__(self, params):
+        super().__init__(params)
 
         self.shape = params.shape
-        self.size_sam_mode = params.size_sam_mode
-        self.snr_sam_mode = params.snr_sam_mode
         self.n_simulations = params.n_simulations
-        self.noise_power = params.noise_power
         self.ML_thr = params.ML_thr
         self.ML_mode = params.ML_mode
-        self.figs_dir = params.figs_dir
         self.n_adj_search = params.n_adj_search
         self.n_largest = params.n_largest
 
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print('specsense_detection device: {}'.format(self.device))
-
         print("Initialized Spectrum Sensing class instance.")
-
-
-    def print_info(self):
-        now = datetime.datetime.now()
-        current_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
-        # Get the latest Git commit ID
-        try:
-            latest_commit_id = subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode('utf-8')
-        except subprocess.CalledProcessError:
-            latest_commit_id = "No Git repository found or Git command failed."
-
-        # Print the formatted date, time, and latest commit ID
-        print(f"Current Date and Time: {current_datetime}")
-        print(f"Latest Git Commit ID: {latest_commit_id}")
 
 
     def plot_MD_vs_SNR(self, snr_min=0.1, snr_max=100.0, n_points=1000, dof_min=1, dof_max=1024, n_dof=11, p_fa=1e-6):
@@ -94,67 +67,6 @@ class specsense_detection(object):
         plt.grid(True)
         plt.savefig(self.figs_dir + 'md_vs_dof_snr.pdf', format='pdf')
         plt.show()
-
-
-    def generate_random_regions(self, shape=(1000,), n_regions=1, min_size=None, max_size=None, size_sam_mode='log'):
-        regions = []
-        ndims = len(shape)
-        for _ in range(n_regions):
-            region_slices = []
-            for d, dim in enumerate(shape):
-                if min_size is not None and max_size is not None:
-                    s1 = min_size[d]
-                    s2 = max_size[d] + 1
-                else:
-                    s1 = 1
-                    s2 = min(101, (dim+1)//2+1)
-                if size_sam_mode=='lin':
-                    size = randint(s1, s2)
-                elif size_sam_mode=='log':
-                    margin=1e-9
-                    size = uniform(np.log10(s1), np.log10(s2-margin))
-                    size = int(10 ** size)
-                start = randint(0, dim-size+1)
-                size = min(size, dim-start)
-                region_slices.append(slice(start, start + size))
-            regions.append(tuple(region_slices))
-
-        return regions
-
-
-    def generate_random_PSD(self, shape=(1000,), sig_regions=None, n_sigs=1, n_sigs_max=1, sig_size_min=None, sig_size_max=None, noise_power=1, snr_range=np.array([10,10]), size_sam_mode='log', snr_sam_mode='log', mask_mode='binary'):
-
-        sig_power_range = noise_power * snr_range.astype(float)
-        psd = exponential(noise_power, shape)
-        if mask_mode=='binary' or mask_mode=='snr':
-            mask = np.zeros(shape, dtype=float)
-        elif mask_mode=='channels':
-            mask = np.zeros((n_sigs_max,)+shape, dtype=float)
-
-        if sig_regions is None:
-            regions = self.generate_random_regions(shape=shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=size_sam_mode)
-        else:
-            regions = sig_regions
-
-        for sig_id, region in enumerate(regions):
-            if snr_sam_mode=='lin':
-                # sig_power = choice(sig_powers)
-                sig_power = uniform(sig_power_range[0], sig_power_range[1])
-            elif snr_sam_mode=='log':
-                sig_power = uniform(np.log10(sig_power_range[0]), np.log10(sig_power_range[1]))
-                sig_power = 10**sig_power
-            region_shape = tuple(slice_.stop - slice_.start for slice_ in region)
-            region_power = exponential(sig_power, region_shape)
-            psd[region] += region_power
-            if mask_mode=='binary':
-                mask[region] = 1.0
-            elif mask_mode=='snr':
-                mask[region] += sig_power/noise_power
-            elif mask_mode=='channels':
-                region_m=(slice(sig_id, sig_id+1),)+region
-                mask[region_m] = 1.0
-    
-        return (psd, mask)
 
 
     def likelihood(self, S):
@@ -480,68 +392,6 @@ class specsense_detection(object):
         return LLRs
 
 
-    def slice_size(self, slice=None):
-        if slice is None:
-            size = 0
-        else:
-            size = 1
-            for s in slice:
-                size *= (s.stop - s.start)
-        return size
-
-
-    def slice_intersection(self, slice_1, slice_2):
-        intersect = []
-        if slice_1 is None or slice_2 is None:
-            return None
-        for s1, s2 in zip(slice_1, slice_2):
-            start = max(s1.start, s2.start)
-            stop = min(s1.stop, s2.stop)
-            if start < stop:
-                intersect.append(slice(start, stop))
-            else:
-                # If the slices do not intersect
-                return None
-        return tuple(intersect)
-    
-
-    def slice_union(self, slice_1, slice_2):
-        union = []
-        if slice_1 is None:
-            return slice_2
-        elif slice_2 is None:
-            return slice_1
-        for s1, s2 in zip(slice_1, slice_2):
-            start = min(s1.start, s2.start)
-            stop = max(s1.stop, s2.stop)
-            if start < stop:
-                union.append(slice(start, stop))
-            else:
-                # If the slices do not intersect
-                return None
-        return tuple(union)
-
-
-    def compute_slices_similarity(self, slice_1, slice_2):
-        if slice_1 is None and slice_2 is not None:
-            ratio = 0.0
-        if slice_2 is None and slice_1 is not None:
-            ratio = 0.0
-        if slice_1 is None and slice_2 is None:
-            ratio = 1.0
-        else:
-            intersection = self.slice_intersection(slice_1, slice_2)
-            union = self.slice_union(slice_1, slice_2)
-            intersection_size = self.slice_size(intersection)
-            union_size = self.slice_size(union)
-
-            # max_size = max(self.slice_size(slice_1), self.slice_size(slice_2))
-            # ratio = intersection_size / max_size
-            ratio = intersection_size / union_size
-
-        return ratio
-
-
     def find_ML_thr(self, thr_coeff=1.0):
         print("Starting to find the optimal ML threshold...")
         
@@ -614,46 +464,6 @@ class specsense_detection(object):
         return det_rate
 
 
-    def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None, snr_range=np.array([10,10]), mask_mode='binary'): 
-        print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, n_sigs_p_dist:{}, sig_size={}-{}, snrs={:0.3f}-{:0.3f}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, n_sigs_p_dist, sig_size_min, sig_size_max, snr_range[0], snr_range[1]))
-        
-        n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
-        data = []
-        masks = []
-        bboxes = []
-        objectnesses = []
-        classes = []
-        for _ in range(n_dataset):
-            n_sigs = np.random.choice(n_sigs_list, p=n_sigs_p_dist)
-            # n_sigs = randint(n_sigs_min, n_sigs_max+1)
-            regions = self.generate_random_regions(shape=shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
-            (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=regions, n_sigs=n_sigs, n_sigs_max=n_sigs_max, sig_size_min=sig_size_min, sig_size_max=sig_size_max, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode=mask_mode)
-            data.append(psd)
-            masks.append(mask)
-            bbox = np.zeros((n_sigs_max, 2*len(shape)), dtype=float)
-            for i, region in enumerate(regions):
-                bbox[i] = np.array([slice_.start for slice_ in region] + [slice_.stop-slice_.start for slice_ in region])
-            bbox = bbox.flatten()
-            bboxes.append(bbox)
-            objectness = np.array([1.0]*n_sigs + [0.0]*(n_sigs_max-n_sigs), dtype=float)
-            objectnesses.append(objectness)
-            class_ = np.array([0.0]*n_sigs_max, dtype=float)
-            classes.append(class_)
-        data = np.array(data)
-        masks = np.array(masks)
-        bboxes = np.array(bboxes)
-        objectnesses = np.array(objectnesses)
-        classes = np.array(classes)
-        np.savez(dataset_path, data=data, masks=masks, bboxes=bboxes, objectnesses=objectnesses, classes=classes)
-        
-        print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}")
-
-
-    def gen_random_str(self, length=6):
-        letters = string.ascii_letters + string.digits
-        return ''.join(random.choice(letters) for i in range(length))
-
-
     def plot(self, plot_dic, mode='snr'):
         plot_dic = {key: plot_dic[key] for key in list(plot_dic.keys()) if mode in key}
 
@@ -703,3 +513,5 @@ if __name__ == '__main__':
     # ss_det = specsense_detection(params)
     random_string = specsense_detection.gen_random_str(None, length=10)
     print(random_string)
+
+

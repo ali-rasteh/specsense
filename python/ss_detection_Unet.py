@@ -1,12 +1,7 @@
-import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader, random_split
-import torchvision.transforms as transforms
-from torch import nn, optim
-import torch.nn.functional as F
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import matplotlib.pyplot as plt
-import cv2
+from backend import *
+from backend import be_np as np, be_scp as scipy
+from signal_utils import signals
+
 
 
 
@@ -255,7 +250,7 @@ class ThresholdMasking(nn.Module):
         super(ThresholdMasking, self).__init__()
 
         self.shape = shape
-        self.thr = nn.Parameter(torch.tensor(1.0))
+        self.thr = nn.Parameter(torch.tensor(6.0))
         self.thr.requires_grad = True
 
         self.negative = -1000.0
@@ -517,19 +512,16 @@ class ObjectDetectionLoss(nn.Module):
 
 
 
-class ss_detection_Unet(object):
+class ss_detection_Unet(signals):
     
     def __init__(self, params=None):
+        super().__init__(params)
 
         self.dataset_path = params.data_dir+params.dataset_name
         self.shape = params.shape
-        self.n_sigs_max = params.n_sigs_max
-        self.mask_mode = params.mask_mode
-        self.eval_smooth = params.eval_smooth
         self.train_ratio = params.train_ratio
         self.val_ratio = params.val_ratio
         self.test_ratio = params.test_ratio
-        self.seed = params.seed
         self.batch_size = params.batch_size
         self.n_layers = params.n_layers
         self.problem_mode = params.problem_mode
@@ -564,12 +556,10 @@ class ss_detection_Unet(object):
         self.test = params.test
         self.load_model_params = params.load_model_params
         self.save_model = params.save_model
-        self.random_str = params.random_str
         self.model_save_dir = params.model_save_dir
         self.model_load_dir = params.model_load_dir
         self.model_name = params.model_name
         self.model_seg_name = params.model_seg_name
-        self.figs_dir = params.figs_dir
 
         self.data_transform = transforms.Compose([
             transforms.ToTensor(),
@@ -621,9 +611,6 @@ class ss_detection_Unet(object):
             self.model = None
 
         print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)))
-
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print('Torch device: {}'.format(self.device))
         
         if self.model_seg is not None:
             self.model_seg.to(self.device)
@@ -696,7 +683,7 @@ class ss_detection_Unet(object):
 
 
     def generate_data_loaders(self):
-        self.dataset = NumpyDataset(shape=self.shape, dataset_path=self.dataset_path, problem_mode=self.problem_mode, det_mode=self.det_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
+        self.dataset = NumpyDataset(shape=self.shape, dataset_path=self.dataset_path, problem_mode=self.problem_mode, seg_mode=self.seg_mode, det_mode=self.det_mode, norm_mode_data=self.norm_mode_data, norm_mode_mask=self.norm_mode_mask, norm_mode_bbox=self.norm_mode_bbox, mask_mode=self.mask_mode)
         if self.apply_pos_weight:
             self.dataset_zeroone_ratio = self.dataset._get_masks_zeroone_ratio()
         else:
@@ -1142,3 +1129,6 @@ if __name__ == '__main__':
     mask = np.random.randint(0, 2, (40000,1,1024))
     bounding_boxes = ss_det_unet.extract_bbox_efficient(mask, min_area=2, max_gap=2)
     print("Bounding Boxes:", bounding_boxes)
+
+
+    

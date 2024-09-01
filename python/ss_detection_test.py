@@ -1,8 +1,10 @@
-import numpy as np
+from backend import *
+from backend import be_np as np, be_scp as scipy
 from ss_detection import specsense_detection
 from ss_detection_Unet import ss_detection_Unet
-import argparse
-import os
+
+import_cupy=False
+import_torch=True
 
 
 
@@ -52,10 +54,10 @@ class params_class(object):
         self.lr=1e-2
         self.n_epochs_tot=50
         self.n_epochs_seg=50
-        self.train=True
-        self.test=True
+        self.train=False
+        self.test=False
         self.load_model_params=[]        # List of model parameters to load, seg and model
-        self.save_model=True
+        self.save_model=False
         self.model_name='IcKI7w_weights_50.pth'
         self.model_seg_name='IcKI7w_unet_weights_50.pth'
         self.problem_mode='segmentation'     # segmentation or detection
@@ -71,6 +73,7 @@ class params_class(object):
         self.contours_max_gap=20
 
         # Constant parameters
+        self.fs=200e6
         self.n_epochs_dethead=self.n_epochs_tot-self.n_epochs_seg
         self.draw_histogram=False
         self.mask_thr=0.0
@@ -94,6 +97,8 @@ class params_class(object):
         self.hist_bins=40
         self.test_n_dataset=10000
         self.random_str=None
+        self.use_cupy=False
+        self.use_torch=True
         self.ML_mode='torch'       # np or torch
         self.model_save_dir='./model/'
         self.model_load_dir='./model/backup/'
@@ -120,6 +125,9 @@ class params_class(object):
         self.n_sigs_p_dist = np.array(self.n_sigs_p_dist) if self.n_sigs_p_dist is not None else self.n_sigs_p_dist
         self.sw_n_sigs_p_dist = np.array(self.sw_n_sigs_p_dist) if self.sw_n_sigs_p_dist is not None else self.sw_n_sigs_p_dist
 
+        self.import_cupy=import_cupy
+        self.import_torch=import_torch
+
         for path in [self.model_save_dir, self.model_load_dir, self.data_dir, self.figs_dir, self.logs_dir]:
             if not os.path.exists(path):
                 os.makedirs(path)
@@ -133,14 +141,15 @@ if __name__ == '__main__':
     for attr in dir(params):
         if not callable(getattr(params, attr)) and not attr.startswith("__"):
             print(f"{attr} = {getattr(params, attr)}")
-    print('\n')
+    print('\n')    
+
 
     ss_det = specsense_detection(params)
+    params.random_str = ss_det.gen_random_str()
+    print("Random string for this run: {}".format(params.random_str))
     ss_det.print_info()
     ss_det.plot_MD_vs_SNR()
     ss_det.plot_MD_vs_DoF()
-    params.random_str = ss_det.gen_random_str()
-    print("Random string for this run: {}".format(params.random_str))
     if params.generate_dataset:
         if params.train:
             ss_det.generate_psd_dataset(dataset_path=params.data_dir+params.dataset_name, n_dataset=params.n_dataset, shape=params.shape, n_sigs_min=params.n_sigs_min, n_sigs_max=params.n_sigs_max, n_sigs_p_dist=params.n_sigs_p_dist, sig_size_min=params.sig_size_min, sig_size_max=params.sig_size_max, snr_range=params.snr_range, mask_mode=params.mask_mode)
@@ -246,4 +255,6 @@ if __name__ == '__main__':
         ss_det.plot(plot_dic=det_rates, mode='snr')
     if params.sweep_size:
         ss_det.plot(plot_dic=det_rates, mode='size')
+
+
 

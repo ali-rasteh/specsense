@@ -4,13 +4,11 @@ from filter_utils import filter_utils
 
 
 
-class fir_separate(object):
-    def __init__(self, params):
 
-        self.n_samples = params.n_samples
-        self.fs = params.fs
-        self.N_r = params.N_r
-        self.N_sig = params.N_sig
+class fir_separate(filter_utils):
+    def __init__(self, params):
+        super().__init__(params)
+
         self.sharp_bw = params.sharp_bw
         self.base_order_pos = params.base_order_pos
         self.base_order_neg = params.base_order_neg
@@ -19,33 +17,12 @@ class fir_separate(object):
         self.ds_rate = params.ds_rate
         self.fil_bank_mode = params.fil_bank_mode
         self.fil_mode = params.fil_mode
-        self.snr = params.snr
-        self.wl = params.wl
-        self.ant_dim = params.ant_dim
-        self.ant_dx = params.ant_dx
-        self.ant_dy = params.ant_dy
-        self.cf_range = params.cf_range
-        self.bw_range = params.bw_range
-        self.psd_range = params.psd_range
-        self.az_range = params.az_range
-        self.el_range = params.el_range
-        self.aoa_mode = params.aoa_mode
-        self.sig_noise = params.sig_noise
         self.ridge_coeff = params.ridge_coeff
-        self.sig_sel_id = params.sig_sel_id
-        self.rx_sel_id = params.rx_sel_id
-        self.spat_sig_range = params.spat_sig_range
-        self.plot_level = params.plot_level
-        self.verbose_level = params.verbose_level
-        self.rand_params = params.rand_params
-        self.plot_mean = params.plot_mean
-        self.use_gpu = params.use_gpu
-        self.gpu_id = params.gpu_id
         self.fo_f_id = params.fo_f_id
         self.snr_f_id = params.snr_f_id
         self.N_sig_f_id = params.N_sig_f_id
         self.N_r_f_id = params.N_r_f_id
-        self.figs_dir = params.figs_dir
+        self.plot_mean = params.plot_mean
 
         self.sharp_order_pos = self.base_order_pos * (2 ** self.n_stage)
         self.sharp_order_neg = self.base_order_neg * (2 ** self.n_stage)
@@ -55,464 +32,11 @@ class fir_separate(object):
         self.grp_dly_base = (self.base_order_pos // 2)
         self.grp_dly_sharp = (self.sharp_order_pos // 2)
 
-        self.t = np.arange(0, self.n_samples) / self.fs  # Time vector
-        self.freq = ((np.arange(1, self.n_samples + 1) / self.n_samples) - 0.5) * self.fs
-        self.om = np.linspace(-np.pi, np.pi, self.n_samples)
-        self.nfft = 2 ** np.ceil(np.log2(self.n_samples)).astype(int)
-
-        self.futil = filter_utils(params=params)
-
         self.basis_fil_ridge_real = None
         self.basis_fil_ridge_imag = None
         self.aoa = None
 
         self.print('Initialized the fir_separate class instance.',2)
-
-
-    def print(self, text='', thr=0):
-        if self.verbose_level>=thr:
-            print(text)
-
-
-    def plt_plot(self, *args, **kwargs):
-
-        args = list(args)
-
-        # Apply np.sqrt to the first two arguments
-        if len(args) > 0:
-            args[0] = self.numpy_transfer(args[0], dst='numpy')
-        if len(args) > 1:
-            args[1] = self.numpy_transfer(args[1], dst='numpy')
-
-        plt.plot(*args, **kwargs)
-        # plt.show()
-
-
-    def check_cupy_gpu(self, gpu_id=0):
-        if not import_cupy:
-            return False
-        try:
-            import cupy as cp
-            # Check if CuPy is installed
-            print("CuPy version: {}".format(cp.__version__))
-
-            num_gpus = cp.cuda.runtime.getDeviceCount()
-            print(f"Number of GPUs available: {num_gpus}")
-
-            # Check if the GPU is available
-            cp.cuda.Device(gpu_id).compute_capability
-            print("GPU {} is available".format(gpu_id))
-
-            print('GPU {} properties: {}'.format(gpu_id, cp.cuda.runtime.getDeviceProperties(gpu_id)))
-            return True
-        except ImportError:
-            print("CuPy is not installed.")
-        except:
-            print("GPU is not available or CUDA is not installed correctly.")
-        return False
-
-
-    def get_gpu_device(self):
-        if self.use_gpu:
-            return np.cuda.Device(self.gpu_id)
-        else:
-            return None
-
-
-    def check_gpu_usage(self):
-        with np.cuda.Device(self.gpu_id) as device:
-            self.print(f"Current device: {device}",0)
-
-
-    def print_gpu_memory(self):
-        with np.cuda.Device(self.gpu_id):
-            mempool = np.get_default_memory_pool()
-            self.print("Used GPU memory: {} bytes".format(mempool.used_bytes()),0)
-            self.print("Total GPU memory: {} bytes".format(mempool.total_bytes()),0)
-
-
-    # Initialize and warm-up
-    def warm_up_gpu(self):
-        self.print('Starting GPU warmup.', 0)
-        with np.cuda.Device(self.gpu_id):
-            start = time.time()
-            _ = np.array([1, 2, 3])
-            _ = np.array([4, 5, 6])
-            a = np.random.rand(1000, 1000)
-            _ = np.dot(np.array([[1, 2], [3, 4]]), np.array([[5, 6], [7, 8]]))
-            _ = np.dot(a, a)
-            np.cuda.Stream.null.synchronize()
-            end = time.time()
-        self.print("GPU warmup time: {}".format(end-start),0)
-
-
-    # Perform computation
-    def gpu_cpu_compare(self, size=20000):
-        self.print('Starting CPU and GPU times compare.', 0)
-        # Generate data
-        a_cpu = numpy.random.rand(size, size).astype(np.float32)
-        b_cpu = numpy.random.rand(size, size).astype(np.float32)
-
-        # Measure CPU time for comparison
-        start = time.time()
-        result_cpu = numpy.dot(a_cpu, b_cpu)
-        end = time.time()
-        cpu_time = end - start
-        self.print("CPU time: {}".format(cpu_time),0)
-
-        with np.cuda.Device(self.gpu_id):
-            # Transfer data to GPU
-            a_gpu = np.asarray(a_cpu)
-            b_gpu = np.asarray(b_cpu)
-
-            # Measure GPU time
-            start = time.time()
-            result_gpu = np.dot(a_gpu, b_gpu)
-            np.cuda.Stream.null.synchronize()  # Ensure all computations are finished
-            end = time.time()
-            gpu_time = end - start
-            self.print("GPU time: {}".format(gpu_time), 0)
-
-        return gpu_time, cpu_time
-
-
-    def numpy_transfer(self, arrays, dst='numpy'):
-
-        if import_cupy:
-            if isinstance(arrays, list):
-                out = []
-                for i in range(len(arrays)):
-                    if dst == 'numpy' and not isinstance(arrays[i], numpy.ndarray):
-                        out.append(np.asnumpy(arrays[i]))
-                    elif dst == 'context' and not isinstance(arrays[i], np.ndarray):
-                        out.append(np.asarray(arrays[i]))
-            else:
-                if dst=='numpy' and not isinstance(arrays, numpy.ndarray):
-                    out = np.asnumpy(arrays)
-                elif dst=='context' and not isinstance(arrays, np.ndarray):
-                    out = np.asarray(arrays)
-        else:
-            out = arrays
-        return out
-
-
-    def lin_to_db(self, x, mode='pow'):
-        if mode=='pow':
-            return 10*np.log10(x)
-        elif mode=='mag':
-            return 20*np.log10(x)
-
-    def db_to_lin(self, x, mode='pow'):
-        if mode == 'pow':
-            return 10**(x/10)
-        elif mode == 'mag':
-            return 10**(x/20)
-
-
-    def gen_spatial_sig(self, ant_dim=1, N_sig=1, N_r=1, az_range=[-np.pi, np.pi], el_range=[-np.pi/2, np.pi/2], mode='uniform'):
-        if ant_dim == 1:
-            if mode=='uniform':
-                az = uniform(az_range[0], az_range[1], N_sig)
-            elif mode=='sweep':
-                az_range_t = az_range[1]-az_range[0]
-                az = np.linspace(az_range[0], az_range[1]-az_range_t/N_sig, N_sig)
-            spatial_sig = np.exp(
-                2 * np.pi * 1j * self.ant_dx / self.wl * np.arange(N_r).reshape((N_r, 1)) * np.sin(az.reshape((1, N_sig))))
-            return spatial_sig, [az]
-        elif ant_dim == 2:
-            spatial_sig = np.zeros((N_r, N_sig)).astype(complex)
-            if mode == 'uniform':
-                az = uniform(az_range[0], az_range[1], N_sig)
-                el = uniform(el_range[0], el_range[1], N_sig)
-            elif mode == 'sweep':
-                az_range_t = az_range[1] - az_range[0]
-                el_range_t = el_range[1] - el_range[0]
-                az = np.linspace(az_range[0], az_range[1]-az_range_t/N_sig, N_sig)
-                el = np.linspace(el_range[0], el_range[1]-el_range_t/N_sig, N_sig)
-            k = 2 * np.pi / self.wl
-            M = np.sqrt(N_r)
-            N = np.sqrt(N_r)
-            for i in range(N_sig):
-                ax = np.exp(1j * k * self.ant_dx * np.arange(M) * np.sin(el[i]) * np.cos(az[i]))
-                ay = np.exp(1j * k * self.ant_dy * np.arange(N) * np.sin(el[i]) * np.sin(az[i]))
-                spatial_sig[:, i] = np.kron(ax, ay)
-            return spatial_sig, [az,el]
-
-
-    def gen_rand_params(self):
-        self.print('Generating a set of random parameters.', 2)
-
-        if self.rand_params:
-            sig_bw = uniform(self.bw_range[0], self.bw_range[1], self.N_sig)
-            psd_range = self.psd_range/1e3/1e6
-            sig_psd = uniform(psd_range[0], psd_range[1], self.N_sig)
-            sig_cf = uniform(self.cf_range[0], self.cf_range[1], self.N_sig)
-
-            # spatial_sig = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (self.N_r, self.N_sig))
-            # spat_sig_mag = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (self.N_r, self.N_sig))
-            # spat_sig_ang = uniform(0, 2 * np.pi, (self.N_r, self.N_sig))
-            # spatial_sig = spat_sig_mag * np.cos(spat_sig_ang) + 1j * spat_sig_mag * np.sin(spat_sig_ang)
-
-            spat_sig_mag = uniform(self.spat_sig_range[0], self.spat_sig_range[1], (1, self.N_sig))
-            spat_sig_mag = np.tile(spat_sig_mag, (self.N_r, 1))
-            spatial_sig, aoa = self.gen_spatial_sig(ant_dim=self.ant_dim, N_sig=self.N_sig, N_r=self.N_r, az_range=self.az_range, el_range=self.el_range, mode=self.aoa_mode)
-            spatial_sig = spat_sig_mag * spatial_sig
-
-        else:
-            self.N_sig = 8
-            self.N_r = 4
-            sig_bw = np.array([23412323.42206957, 29720830.74807138, 28854411.42943605,
-                               13436699.17479161, 32625455.26622169, 32053137.51678639,
-                               35113044.93237082, 21712944.94126201])
-            sig_psd = np.array([1.82152663e-10+0.j, 2.18261433e-10+0.j, 2.10519428e-10+0.j,
-                               1.72903294e-10+0.j, 2.25096120e-10+0.j, 1.42163622e-10+0.j,
-                               1.16246992e-10+0.j, 1.26733169e-10+0.j])
-            sig_cf = np.array([ 76368431.6004079 ,  10009408.65004128, -17835240.41355851,
-                               -17457600.99681053, -11925292.61281498,  36570531.45445453,
-                                28089213.97482219,  36680162.41373056])
-            spatial_sig = np.array([[ 0.28560148+0.j        ,  0.49996994+0.j        ,
-                                     0.65436809+0.j        ,  0.77916855+0.j        ,
-                                     0.77740179+0.j        ,  0.72816271+0.j        ,
-                                     0.70354769+0.j        ,  0.79870358+0.j        ],
-                                   [ 0.28247656-0.04213306j,  0.23454661-0.44154029j,
-                                     0.38195112-0.5313294j ,  0.53913962+0.56252299j,
-                                     0.72772125+0.27345077j, -0.08719831-0.72292281j,
-                                     0.30553255-0.63374223j,  0.73871532+0.30368912j],
-                                   [ 0.21580258+0.18707605j,  0.3849812 +0.31899753j,
-                                     0.65124563-0.06384924j, -0.75863413-0.17770168j,
-                                     0.57519734-0.52297377j, -0.44911618-0.5731628j ,
-                                     0.3280136 -0.62240375j,  0.33967472+0.72287516j],
-                                   [ 0.24103957+0.1531931j ,  0.46232038-0.19034129j,
-                                     0.32828468-0.56606251j, -0.39663875-0.6706574j ,
-                                     0.72239466-0.28722724j, -0.51525611+0.51452121j,
-                                    -0.41820151-0.56576218j,  0.0393057 +0.79773584j]])
-            aoa = None
-
-        sig_psd = sig_psd.astype(complex)
-        spatial_sig = spatial_sig.astype(complex)
-
-        self.sig_bw = sig_bw
-        self.sig_psd = sig_psd
-        self.sig_cf = sig_cf
-        self.spatial_sig = spatial_sig
-        self.aoa = aoa
-
-        return (sig_bw, sig_psd, sig_cf, spatial_sig, aoa)
-
-
-    def gen_noise(self, mode='complex'):
-        if mode=='real':
-            noise = randn(self.n_samples).astype(complex)           # Generate noise with PSD=1/fs W/Hz
-            # noise = normal(loc=0, scale=1, size=self.n_samples).astype(complex)
-        elif mode=='complex':
-            noise = (randn(self.n_samples) + 1j*randn(self.n_samples)).astype(complex)           # Generate noise with PSD=2/fs W/Hz
-
-        return noise
-
-
-    def generate_signals(self, sig_bw, sig_psd, sig_cf, spatial_sig):
-        self.print('Generating a set of signals and a rx signal.',2)
-
-        rx = np.zeros((self.N_r, self.n_samples), dtype=complex)
-        sigs = np.zeros((self.N_sig, self.n_samples), dtype=complex)
-
-        for i in range(self.N_sig):
-            fil_sig = firwin(1001, sig_bw[i] / self.fs)
-            # sigs[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * t) * sig_psd[i] * np.convolve(noise, fil_sig, mode='same')
-            sigs[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * self.t) * np.sqrt(
-                sig_psd[i]*(self.fs/2)) * lfilter(fil_sig, np.array([1]), self.gen_noise(mode='complex'))
-            rx += np.outer(spatial_sig[:, i], sigs[i, :])
-
-            if self.sig_noise:
-                yvar = np.mean(np.abs(sigs[i, :]) ** 2)
-                wvar = yvar / self.snr
-                sigs[i, :] += np.sqrt(wvar / 2) * self.gen_noise(mode='complex')
-
-        yvar = np.mean(np.abs(rx) ** 2, axis=1)
-        wvar = yvar / self.snr
-        noise_rx = np.array([self.gen_noise(mode='complex') for _ in range(self.N_r)])
-        # rx += np.sqrt(wvar[:, None] / 2) * noise
-        # rx += np.outer(np.sqrt(wvar / 2), self.gen_noise(mode='complex'))
-        rx += np.sqrt(wvar[:, None] / 2) * noise_rx
-
-        if self.plot_level >= 2:
-            plt.figure()
-            # plt.figure(figsize=(10,6))
-            # plt.tight_layout()
-            plt.subplots_adjust(wspace=0.5, hspace=1.0)
-            plt.subplot(3, 1, 1)
-            for i in range(self.N_sig):
-                spectrum = fftshift(fft(sigs[i, :]))
-                spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
-                plt.plot(self.freq, spectrum, color=rand(3), linewidth=0.5)
-            plt.title('Frequency spectrum of initial wideband signals')
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('Magnitude (dB)')
-
-            plt.subplot(3, 1, 2)
-            spectrum = fftshift(fft(rx[self.rx_sel_id, :]))
-            spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
-            plt.plot(self.freq, spectrum, 'b-', linewidth=0.5)
-            plt.title('Frequency spectrum of RX signal in a selected antenna')
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('Magnitude (dB)')
-
-            plt.subplot(3, 1, 3)
-            spectrum = fftshift(fft(sigs[self.sig_sel_id, :]))
-            spectrum = self.lin_to_db(np.abs(spectrum), mode='mag')
-            plt.plot(self.freq, spectrum, 'r-', linewidth=0.5)
-            plt.title('Frequency spectrum of the desired wideband signal')
-            plt.xlabel('Frequency (Hz)')
-            plt.ylabel('Magnitude (dB)')
-
-            plt.savefig(os.path.join(self.figs_dir, 'tx_rx_sigs.pdf'), format='pdf')
-            # plt.show(block=False)
-
-            # frequencies, psd = welch(rx[0,:], self.fs, nperseg=1024)
-            # plt.figure(figsize=(10, 6))
-            # plt.semilogy(frequencies, psd)
-            # plt.title('Power Spectral Density (PSD) of Signal')
-            # plt.xlabel('Frequency (Hz)')
-            # plt.ylabel(r'PSD ($V^2$/Hz)')
-            # plt.grid(True)
-            # plt.show()
-            # raise InterruptedError("Plot interrupt")
-
-        return (rx, sigs)
-
-
-    def wiener_filter_design(self, rx, sigs):
-        self.print('Beginning to design the optimal wiener filter using the rx and desired signals.',2)
-
-        # N_sig = sigs.shape[0]
-        # N_r = rx.shape[0]
-        # n_samples = sigs.shape[1]
-
-        self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
-
-        if self.N_r <= 1:
-            for i in range(self.N_sig):
-                for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = self.futil.wiener_fir(rx, sigs[i, :].reshape((1, -1)), self.wiener_order_pos,
-                                                                         self.wiener_order_neg).reshape(-1)
-        else:
-            fil_wiener = self.futil.wiener_fir_vector(rx, sigs, self.wiener_order_pos, self.wiener_order_neg)
-            for i in range(self.N_sig):
-                for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = fil_wiener[i, j::self.N_r]
-
-        if self.plot_level >= 3:
-            # plt.figure()
-            # w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=om)
-            # plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
-            # plt.title('Frequency response of the Wiener filter \n for the selected TX signal and RX antenna')
-            # plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
-            # plt.ylabel('Magnitude (dB)')
-            # # plt.show(block=False)
-
-            plt.figure()
-            plt.subplots_adjust(wspace=0.5, hspace=1.0)
-            for rx_id in range(self.N_r):
-                plt.subplot(self.N_r,1,rx_id+1)
-                w, h = freqz(self.fil_wiener_single[self.sig_sel_id][rx_id], worN=self.om)
-                plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
-                plt.title('Selected TX signal, and RX antenna {}'.format(rx_id+1))
-                if rx_id == 1:
-                    plt.ylabel('Magnitude (dB)')
-            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
-            plt.savefig(os.path.join(self.figs_dir, 'wiener_filters.pdf'), format='pdf')
-            # plt.show(block=False)
-
-        # if self.plot_level>=1:
-        #     print('bw: ',self.sig_bw/1e6)
-        #     print('cf: ',self.sig_cf/1e6)
-        #     print('aoa: ',self.aoa)
-        #     f_len = len(self.freq)
-        #     S = np.zeros((self.N_sig, f_len))
-        #     for sig_id in range(self.N_sig):
-        #         h_simo = np.zeros((self.N_r, f_len), dtype=complex)
-        #         for rx_id in range(self.N_r):
-        #             w, h = freqz(self.fil_wiener_single[sig_id][rx_id], worN=self.om)
-        #             h_simo[rx_id,:] = h
-        #         # print(np.mean(np.abs(h_simo)))
-        #         # print(np.mean(np.abs(self.spatial_sig[:,sig_id])))
-        #         S[sig_id,:] = np.abs(np.dot(np.conj(self.spatial_sig[:,sig_id].T), h_simo))**2
-        #         # print(np.mean(np.abs(S[sig_id,:])))
-        #     # print(np.mean(np.abs(S), axis=1))
-        #     # print(np.abs(S))
-        #
-        #     S = self.lin_to_db(S)
-        #     plt.figure(figsize=(10, 6))
-        #     plt.imshow(S, aspect='auto',
-        #                # extent=[self.freq[0] / 1e6, self.freq[-1] / 1e6, self.aoa[0][-1], self.aoa[0][0]],
-        #                extent=[self.freq[0] / 1e6, self.freq[-1] / 1e6, -np.pi, np.pi],
-        #                cmap='viridis', interpolation='nearest')
-        #     plt.colorbar(label=r'Gain $|S(\theta,f)|^2$')
-        #     plt.xlabel('Frequency (MHz)')
-        #     plt.ylabel('Angle of Arrival (Rad)')
-        #     plt.title('Wiener Filter Response Heatmap')
-        #     plt.show()
-
-        return self.fil_wiener_single
-
-
-    def wiener_filter_apply(self, rx, sigs):
-        self.print('Beginning to apply the optimal wiener filter on the rx signal.',2)
-
-        rx_dly = rx.copy()
-        self.wiener_errs = np.zeros(self.N_sig)
-
-        for i in range(self.N_sig):
-            sig_filtered_wiener = np.zeros_like(self.t, dtype=complex)
-            for j in range(self.N_r):
-                # sig_filtered_wiener += np.convolve(rx_dly[j, :], fil_wiener_single[i][j], mode='same')
-                sig_filtered_wiener += lfilter(self.fil_wiener_single[i][j], np.array([1]), rx_dly[j, :])
-
-            time_delay = self.futil.extract_delay(sig_filtered_wiener, sigs[i, :], self.plot_level >= 5)
-            self.print(f'Time delay between the signal and its Wiener filtered version for signal {i + 1}: {time_delay} samples',3)
-
-            sig_filtered_wiener_adj, signal_adj, mse, err2sig_ratio = self.futil.time_adjust(sig_filtered_wiener, sigs[i, :],
-                                                                                             time_delay)
-            self.print(
-                f'Error to signal ratio for the estimation of the main signal using Wiener filter for signal {i + 1}: {err2sig_ratio}',3)
-            self.wiener_errs[i] = err2sig_ratio
-
-            if i == self.sig_sel_id and self.plot_level >= 4:
-                plt.figure()
-                index = range(self.n_samples // 2, self.n_samples // 2 + 500)
-                plt.plot(self.t[index], np.abs(signal_adj[index]), 'r-', linewidth=0.5)
-                plt.plot(self.t[index], np.abs(sig_filtered_wiener_adj[index]), 'b-', linewidth=0.5)
-                plt.title('Signal and its recovered wiener filtered in time domain')
-                plt.xlabel('Time(s)')
-                plt.ylabel('Magnitude')
-                # plt.show(block=False)
-
-
-    def wiener_filter_param(self, sig_bw, sig_psd, sig_cf, spatial_sig):
-        self.print('Beginning to design the optimal wiener filter using parameters.',2)
-
-        self.wiener_errs_param = np.zeros(self.N_sig)
-        self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
-
-        if self.N_r <= 1:
-            for i in range(self.N_sig):
-                for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = self.futil.wiener_fir_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr, self.wiener_order_pos,
-                                                                               self.wiener_order_neg).reshape(-1)
-        else:
-            fil_wiener = self.futil.wiener_fir_vector_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr, self.wiener_order_pos, self.wiener_order_neg)
-            for i in range(self.N_sig):
-                for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = fil_wiener[i, j::self.N_r]
-
-        if self.plot_level >= 3:
-            plt.figure()
-            w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=self.om)
-            plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
-            plt.title('Frequency response of the parametric Wiener filter \n for the selected TX signal and RX antenna')
-            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
-            plt.ylabel('Magnitude (dB)')
-            # plt.show(block=False)
 
 
     def basis_filter_design(self, rx, sigs, sig_bw, sig_cf):
@@ -574,11 +98,11 @@ class fir_separate(object):
                     self.sig_bank[i][j] = lfilter(self.fil_bank[i], np.array([1]), rx[j, :])
                     self.filter_delay = self.grp_dly_sharp
                 elif self.fil_mode == 2:
-                    self.sig_bank[i][j], self.filter_delay = self.futil.basis_fir_us(rx[j, :], self.fil_base[i], self.t, self.freq,
+                    self.sig_bank[i][j], self.filter_delay = self.basis_fir_us(rx[j, :], self.fil_base[i], self.t, self.freq,
                                                                                      self.fil_cf[i], self.n_stage,
                                                                                      self.us_rate, plot_procedure)
                 elif self.fil_mode == 3:
-                    self.sig_bank[i][j], self.filter_delay = self.futil.basis_fir_ds_us(rx[j, :], self.fil_base[i], self.t,
+                    self.sig_bank[i][j], self.filter_delay = self.basis_fir_ds_us(rx[j, :], self.fil_base[i], self.t,
                                                                                         self.freq, self.fil_cf[i], self.n_stage,
                                                                                         self.ds_rate, self.us_rate, plot_procedure)
                 else:
@@ -676,11 +200,11 @@ class fir_separate(object):
 
             self.sig_filtered_base = self.numpy_transfer(self.sig_filtered_base, dst='context')
 
-            time_delay = self.futil.extract_delay(self.sig_filtered_base, sigs[i, :self.n_samples - shift], self.plot_level >= 5)
+            time_delay = self.extract_delay(self.sig_filtered_base, sigs[i, :self.n_samples - shift], self.plot_level >= 5)
             self.print(
                 f'Time delay between the signal and its basis filtered version for signal {i + 1}: {time_delay} samples',3)
             # time_delay = 0
-            sig_filtered_base_adj, signal_adj, mse, err2sig_ratio = self.futil.time_adjust(self.sig_filtered_base,
+            sig_filtered_base_adj, signal_adj, mse, err2sig_ratio = self.time_adjust(self.sig_filtered_base,
                                                                                            sigs[i, :self.n_samples - shift],
                                                                                            time_delay)
             self.print(
@@ -873,4 +397,5 @@ class fir_separate(object):
 
 if __name__ == '__main__':
     pass
+
 

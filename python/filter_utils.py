@@ -1,5 +1,7 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
+from signal_utils import signals
+
 
 
 
@@ -10,60 +12,11 @@ from backend import be_np as np, be_scp as scipy
 #     return wrapper
 
 
-class filter_utils(object):
+class filter_utils(signals):
 
     def __init__(self, params):
-        self.plot_level = params.plot_level
-        self.verbose_level = params.verbose_level
-        self.use_gpu = params.use_gpu
-        self.gpu_id = params.gpu_id
-
-
-    def print(self, text='', thr=0):
-        if self.verbose_level>=thr:
-            print(text)
-
-
-    def lin_to_db(self, x, mode='pow'):
-        if mode=='pow':
-            return 10*np.log10(x)
-        elif mode=='mag':
-            return 20*np.log10(x)
-
-    def db_to_lin(self, x, mode='pow'):
-        if mode == 'pow':
-            return 10**(x/10)
-        elif mode == 'mag':
-            return 10**(x/20)
-
-
-    def upsample(self, signal, up=2):
-        """
-        Upsample a signal by a factor of 2 by inserting zeros between the original samples.
-
-        Args:
-            signal (np.array): Input signal to be upsampled.
-
-        Returns:
-            np.array: Upsampled signal with zeros inserted.
-        """
-        upsampled_length = up * len(signal)
-        upsampled_signal = np.zeros(upsampled_length, dtype=complex)
-
-        # Assign the original signal values to the even indices
-        upsampled_signal[::up] = signal.copy()
-
-        return upsampled_signal
-
-    def cross_correlation(self, sig_1, sig_2, index):
-        if index >= 0:
-            padded_sig_2 = np.concatenate((np.zeros(index, dtype=complex), sig_2[:len(sig_2) - index]))
-        else:
-            padded_sig_2 = np.concatenate((sig_2[-index:], np.zeros(-index, dtype=complex)))
-
-        cros_corr = np.mean(sig_1 * np.conj(padded_sig_2))
-        return cros_corr
-
+        super().__init__(params)
+        
 
     def wiener_fir(self, input, output, filter_order_pos, filter_order_neg):
 
@@ -234,68 +187,6 @@ class filter_utils(object):
         wiener_filter_coef = np.linalg.solve(Rxx.T, Ryx.T).T  # Equivalent to Ryx / Rxx
 
         return wiener_filter_coef
-
-
-    def extract_delay(self, sig_1, sig_2, plot_corr=False):
-        """
-        Calculate the delay of signal 1 with respect to signal 2 (signal 1 is ahead of signal 2)
-
-        Args:
-            sig_1 (np.array): First signal.
-            sig_2 (np.array): Second signal.
-            plot_corr (bool): Whether to plot the cross-correlation or not.
-
-        Returns:
-            delay (int): The delay of signal 1 with respect to signal 2 in samples.
-        """
-        cross_corr = np.correlate(sig_1, sig_2, mode='full')
-        # cross_corr = np.correlate(sig_1, sig_2, mode='same')
-        lags = np.arange(-len(sig_2) + 1, len(sig_1))
-
-        if plot_corr:
-            plt.figure()
-            plt.plot(lags, np.abs(cross_corr), linewidth=1.0)
-            plt.title('Cross-Correlation of the two signals')
-            plt.xlabel('Lags')
-            plt.ylabel('Correlation Coefficient')
-            # plt.show()
-
-        max_idx = np.argmax(np.abs(cross_corr))
-        delay = int(lags[max_idx])
-        # self.print(f'Time delay between the two signals: {delay} samples',4)
-        return delay
-
-
-    def time_adjust(self, sig_1, sig_2, delay):
-        """
-        Adjust the time of sig_1 with respect to sig_2 based on the given delay.
-
-        Args:
-            sig_1 (np.array): First signal.
-            sig_2 (np.array): Second signal.
-            delay (int): The delay of sig_1 with respect to sig_2 in samples.
-
-        Returns:
-            sig_1_adj (np.array): Adjusted sig_1.
-            sig_2_adj (np.array): Adjusted sig_2.
-            mse (float): Mean squared error between adjusted signals.
-            err2sig_ratio (float): Ratio of MSE to mean squared value of sig_2.
-        """
-        n_points = np.shape(sig_1)[0]
-
-        if delay >= 0:
-            sig_1_adj = np.concatenate((sig_1[delay:], np.zeros(delay).astype(complex)))
-            sig_2_adj = sig_2.copy()
-        else:
-            delay = abs(delay)
-            sig_1_adj = sig_1.copy()
-            sig_2_adj = np.concatenate((sig_2[delay:], np.zeros(delay).astype(complex)))
-
-        mse = float(np.mean(np.abs(sig_1_adj[:n_points-delay] - sig_2_adj[:n_points-delay]) ** 2))
-        err2sig_ratio = float(mse / np.mean(np.abs(sig_2) ** 2))
-
-        return sig_1_adj, sig_2_adj, mse, err2sig_ratio
-
 
 
     def basis_fir_us(self, input, fil_base, t, freq, center_freq, iters, us_rate, plot_procedure=False):
@@ -490,7 +381,142 @@ class filter_utils(object):
         return output, grp_dly
 
 
+    def wiener_filter_design(self, rx, sigs):
+        self.print('Beginning to design the optimal wiener filter using the rx and desired signals.',2)
+
+        # N_sig = sigs.shape[0]
+        # N_r = rx.shape[0]
+        # n_samples = sigs.shape[1]
+
+        self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
+
+        if self.N_r <= 1:
+            for i in range(self.N_sig):
+                for j in range(self.N_r):
+                    self.fil_wiener_single[i][j] = self.wiener_fir(rx, sigs[i, :].reshape((1, -1)), self.wiener_order_pos,
+                                                                         self.wiener_order_neg).reshape(-1)
+        else:
+            fil_wiener = self.wiener_fir_vector(rx, sigs, self.wiener_order_pos, self.wiener_order_neg)
+            for i in range(self.N_sig):
+                for j in range(self.N_r):
+                    self.fil_wiener_single[i][j] = fil_wiener[i, j::self.N_r]
+
+        if self.plot_level >= 3:
+            # plt.figure()
+            # w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=om)
+            # plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
+            # plt.title('Frequency response of the Wiener filter \n for the selected TX signal and RX antenna')
+            # plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
+            # plt.ylabel('Magnitude (dB)')
+            # # plt.show(block=False)
+
+            plt.figure()
+            plt.subplots_adjust(wspace=0.5, hspace=1.0)
+            for rx_id in range(self.N_r):
+                plt.subplot(self.N_r,1,rx_id+1)
+                w, h = freqz(self.fil_wiener_single[self.sig_sel_id][rx_id], worN=self.om)
+                plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
+                plt.title('Selected TX signal, and RX antenna {}'.format(rx_id+1))
+                if rx_id == 1:
+                    plt.ylabel('Magnitude (dB)')
+            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
+            plt.savefig(os.path.join(self.figs_dir, 'wiener_filters.pdf'), format='pdf')
+            # plt.show(block=False)
+
+        # if self.plot_level>=1:
+        #     print('bw: ',self.sig_bw/1e6)
+        #     print('cf: ',self.sig_cf/1e6)
+        #     print('aoa: ',self.aoa)
+        #     f_len = len(self.freq)
+        #     S = np.zeros((self.N_sig, f_len))
+        #     for sig_id in range(self.N_sig):
+        #         h_simo = np.zeros((self.N_r, f_len), dtype=complex)
+        #         for rx_id in range(self.N_r):
+        #             w, h = freqz(self.fil_wiener_single[sig_id][rx_id], worN=self.om)
+        #             h_simo[rx_id,:] = h
+        #         # print(np.mean(np.abs(h_simo)))
+        #         # print(np.mean(np.abs(self.spatial_sig[:,sig_id])))
+        #         S[sig_id,:] = np.abs(np.dot(np.conj(self.spatial_sig[:,sig_id].T), h_simo))**2
+        #         # print(np.mean(np.abs(S[sig_id,:])))
+        #     # print(np.mean(np.abs(S), axis=1))
+        #     # print(np.abs(S))
+        #
+        #     S = self.lin_to_db(S)
+        #     plt.figure(figsize=(10, 6))
+        #     plt.imshow(S, aspect='auto',
+        #                # extent=[self.freq[0] / 1e6, self.freq[-1] / 1e6, self.aoa[0][-1], self.aoa[0][0]],
+        #                extent=[self.freq[0] / 1e6, self.freq[-1] / 1e6, -np.pi, np.pi],
+        #                cmap='viridis', interpolation='nearest')
+        #     plt.colorbar(label=r'Gain $|S(\theta,f)|^2$')
+        #     plt.xlabel('Frequency (MHz)')
+        #     plt.ylabel('Angle of Arrival (Rad)')
+        #     plt.title('Wiener Filter Response Heatmap')
+        #     plt.show()
+
+        return self.fil_wiener_single
+
+
+    def wiener_filter_apply(self, rx, sigs):
+        self.print('Beginning to apply the optimal wiener filter on the rx signal.',2)
+
+        rx_dly = rx.copy()
+        self.wiener_errs = np.zeros(self.N_sig)
+
+        for i in range(self.N_sig):
+            sig_filtered_wiener = np.zeros_like(self.t, dtype=complex)
+            for j in range(self.N_r):
+                # sig_filtered_wiener += np.convolve(rx_dly[j, :], fil_wiener_single[i][j], mode='same')
+                sig_filtered_wiener += lfilter(self.fil_wiener_single[i][j], np.array([1]), rx_dly[j, :])
+
+            time_delay = self.extract_delay(sig_filtered_wiener, sigs[i, :], self.plot_level >= 5)
+            self.print(f'Time delay between the signal and its Wiener filtered version for signal {i + 1}: {time_delay} samples',3)
+
+            sig_filtered_wiener_adj, signal_adj, mse, err2sig_ratio = self.time_adjust(sig_filtered_wiener, sigs[i, :],
+                                                                                             time_delay)
+            self.print(
+                f'Error to signal ratio for the estimation of the main signal using Wiener filter for signal {i + 1}: {err2sig_ratio}',3)
+            self.wiener_errs[i] = err2sig_ratio
+
+            if i == self.sig_sel_id and self.plot_level >= 4:
+                plt.figure()
+                index = range(self.n_samples // 2, self.n_samples // 2 + 500)
+                plt.plot(self.t[index], np.abs(signal_adj[index]), 'r-', linewidth=0.5)
+                plt.plot(self.t[index], np.abs(sig_filtered_wiener_adj[index]), 'b-', linewidth=0.5)
+                plt.title('Signal and its recovered wiener filtered in time domain')
+                plt.xlabel('Time(s)')
+                plt.ylabel('Magnitude')
+                # plt.show(block=False)
+
+
+    def wiener_filter_param(self, sig_bw, sig_psd, sig_cf, spatial_sig):
+        self.print('Beginning to design the optimal wiener filter using parameters.',2)
+
+        self.wiener_errs_param = np.zeros(self.N_sig)
+        self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
+
+        if self.N_r <= 1:
+            for i in range(self.N_sig):
+                for j in range(self.N_r):
+                    self.fil_wiener_single[i][j] = self.wiener_fir_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr, self.wiener_order_pos,
+                                                                               self.wiener_order_neg).reshape(-1)
+        else:
+            fil_wiener = self.wiener_fir_vector_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr, self.wiener_order_pos, self.wiener_order_neg)
+            for i in range(self.N_sig):
+                for j in range(self.N_r):
+                    self.fil_wiener_single[i][j] = fil_wiener[i, j::self.N_r]
+
+        if self.plot_level >= 3:
+            plt.figure()
+            w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=self.om)
+            plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
+            plt.title('Frequency response of the parametric Wiener filter \n for the selected TX signal and RX antenna')
+            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
+            plt.ylabel('Magnitude (dB)')
+            # plt.show(block=False)
+
 
 if __name__ == '__main__':
     pass
+
+
 
