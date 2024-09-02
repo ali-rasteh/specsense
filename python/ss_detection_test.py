@@ -1,14 +1,14 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from ss_detection import specsense_detection
-from ss_detection_Unet import ss_detection_Unet
+from ss_detection import SS_Detection
+from ss_detection_unet import SS_Detection_Unet
 
 import_cupy=False
 import_torch=True
 
 
 
-class params_class(object):
+class Params_Class(object):
     def __init__(self):
         
         self.n_fft=1024
@@ -136,11 +136,10 @@ class params_class(object):
 
 if __name__ == '__main__':
 
-    params = params_class()
-    ss_det = specsense_detection(params)
-    ss_det.print_params(params)
+    params = Params_Class()
+    ss_det = SS_Detection(params)
     params.random_str = ss_det.gen_random_str()
-    ss_det.print_info()
+    ss_det.print_info(params)
     ss_det.plot_MD_vs_SNR()
     ss_det.plot_MD_vs_DoF()
     if params.generate_dataset:
@@ -151,7 +150,7 @@ if __name__ == '__main__':
 
 
     if params.train or params.test:
-        ss_det_unet = ss_detection_Unet(params)
+        ss_det_unet = SS_Detection_Unet(params)
         ss_det_unet.generate_data_loaders()
         ss_det_unet.generate_model()
         ss_det_unet.load_model()

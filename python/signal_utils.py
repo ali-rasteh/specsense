@@ -1,17 +1,24 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from general import general
+from general import General
 
 
 
 
 
-class signals(general):
+class Signal_Utils(General):
     def __init__(self, params):
         super().__init__(params)
         
         self.fs=getattr(params, 'fs', None)
+        self.fs_tx=getattr(params, 'fs_tx', self.fs)
+        self.fs_rx=getattr(params, 'fs_rx', self.fs)
         self.n_samples=getattr(params, 'n_samples', None)
+        self.n_samples_tx=getattr(params, 'n_samples_tx', self.n_samples)
+        self.n_samples_rx=getattr(params, 'n_samples_rx', self.n_samples)
+        self.nfft = getattr(params, 'nfft', 2 ** np.ceil(np.log2(self.n_samples)).astype(int))
+        self.nfft_tx = getattr(params, 'nfft_tx', self.nfft)
+        self.nfft_rx = getattr(params, 'nfft_rx', self.nfft)
         self.snr=getattr(params, 'snr', None)
         self.sig_noise=getattr(params, 'sig_noise', None)
         self.sig_sel_id=getattr(params, 'sig_sel_id', None)
@@ -39,12 +46,15 @@ class signals(general):
         self.eval_smooth = getattr(params, 'eval_smooth', None)
         self.seed = getattr(params, 'seed', None)
 
-
-        self.nfft = getattr(params, 'nfft', 2 ** np.ceil(np.log2(self.n_samples)).astype(int))
         self.t = getattr(params, 't', np.arange(0, self.n_samples) / self.fs)
-        self.freq = getattr(params, 'freq', ((np.arange(1, self.n_samples + 1) / self.n_samples) - 0.5) * self.fs)
-        self.om = getattr(params, 'om', np.linspace(-np.pi, np.pi, self.n_samples))
-
+        self.t_tx = getattr(params, 't_tx', np.arange(0, self.n_samples_tx) / self.fs_tx)
+        self.t_rx = getattr(params, 't_rx', np.arange(0, self.n_samples_rx) / self.fs_rx)
+        self.freq = getattr(params, 'freq', ((np.arange(0, self.nfft) / self.nfft) - 0.5) * self.fs)
+        self.freq_tx = getattr(params, 'freq_tx', ((np.arange(0, self.nfft_tx) / self.nfft_tx) - 0.5) * self.fs_tx)
+        self.freq_rx = getattr(params, 'freq_rx', ((np.arange(0, self.nfft_rx) / self.nfft_rx) - 0.5) * self.fs_rx)
+        self.om = getattr(params, 'om', np.linspace(-np.pi, np.pi, self.nfft))
+        self.om_tx = getattr(params, 'om_tx', np.linspace(-np.pi, np.pi, self.nfft_tx))
+        self.om_rx = getattr(params, 'om_rx', np.linspace(-np.pi, np.pi, self.nfft_rx))
 
 
     def lin_to_db(self, x, mode='pow'):
@@ -478,5 +488,278 @@ class signals(general):
         np.savez(dataset_path, data=data, masks=masks, bboxes=bboxes, objectnesses=objectnesses, classes=classes)
         
         print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}")
+
+
+    def generate_tone(self, f=10e6, sig_mode='tone_2', gen_mode='fft'):
+        if gen_mode == 'time':
+            wt = np.multiply(2 * np.pi * f, self.t_tx)
+            if sig_mode=='tone_1':
+                tone_td = np.cos(wt) + 1j * np.sin(wt)
+            elif sig_mode=='tone_2':
+                tone_td = np.cos(wt) + 1j * np.cos(wt)
+                # tone_td = np.cos(wt)
+
+        elif gen_mode == 'fft':
+            sc = int(np.round((f)*self.nfft_tx/self.dac_fs))
+            tone_fd = np.zeros((self.nfft_tx,), dtype='complex')
+            if sig_mode=='tone_1':
+                tone_fd[(self.nfft_tx >> 1) + sc] = 1
+            elif sig_mode=='tone_2':
+                tone_fd[(self.nfft_tx >> 1) + sc] = 1
+                tone_fd[(self.nfft_tx >> 1) - sc] = 1
+            tone_fd = fftshift(tone_fd, axes=0)
+
+            # Convert the waveform to time-domain
+            tone_td = np.fft.ifft(tone_fd, axis=0)
+
+        # Normalize the signal
+        tone_td /= np.max([np.abs(tone_td.real), np.abs(tone_td.imag)])
+
+        self.print("Tone generation done", thr=2)
+
+        return tone_td
+
+
+    def generate_wideband(self, bw=200e6, wb_null_sc=10, modulation='qam', sig_mode='wideband', gen_mode='fft'):
+        if gen_mode == 'fft':
+            sc_min = int(np.round(-(bw/2)*self.nfft_tx/self.dac_fs))
+            sc_max = int(np.round((bw/2)*self.nfft_tx/self.dac_fs))
+            np.random.seed(self.seed)
+            if modulation=='qam':
+                sym = (1 + 1j, 1 - 1j, -1 + 1j, -1 - 1j)  # QAM symbols
+            else:
+                sym = ()
+                # raise ValueError('Invalid signal modulation: ' + modulation)
+
+            # Create the wideband sequence in frequency-domain
+            wb_fd = np.zeros((self.nfft_tx,), dtype='complex')
+            if modulation == 'qam':
+                wb_fd[((self.nfft_tx >> 1) + sc_min):((self.nfft_tx >> 1) + sc_max)] = np.random.choice(sym, len(range(sc_min, sc_max)))
+            else:
+                wb_fd[((self.nfft_tx >> 1) + sc_min):((self.nfft_tx >> 1) + sc_max)] = 1
+            if sig_mode=='wideband_null':
+                wb_fd[((self.nfft_tx >> 1) - wb_null_sc):((self.nfft_tx >> 1) + wb_null_sc)] = 0
+
+            wb_fd = fftshift(wb_fd, axes=0)
+            # Convert the waveform to time-domain
+            wb_td = ifft(wb_fd, axis=0)
+
+        elif gen_mode == 'ZadoffChu':
+            cf = self.nfft_tx % 2
+            q = 0.5
+            u = 3
+            wb_fd = np.exp(-1j * np.pi * u * np.arange(self.nfft_tx) * (np.arange(self.nfft_tx) + cf + 2*q) / self.nfft_tx)
+            # cf = 0
+            # q = 0
+            # u = 3
+            # wb_fd = np.exp(2j * np.pi * u * np.arange(self.nfft_tx) * (np.arange(self.nfft_tx) + cf + 2*q) / self.nfft_tx)
+            wb_td = ifft(wb_fd, axis=0)
+
+        elif gen_mode == 'ofdm':
+            # N_blocks = 1000
+            N_cp = 256
+            N_fft = 768
+            M = 16
+            n_vec = np.arange(N_fft)
+            x = np.exp(1j * np.pi * n_vec ** 2 / N_fft)
+            x_cp = np.concatenate((x[-N_cp:], x))
+            wb_td = x_cp
+            # wb_td = np.tile(x_cp, N_blocks)
+
+        # Normalize the signal
+        wb_td /= np.max([np.abs(wb_td.real), np.abs(wb_td.imag)])
+
+        self.print("Wide-band signal generation done", thr=2)
+
+        return wb_td
+    
+
+
+    def filter(self, sig, center_freq=0, cutoff=50e6, fil_order=1000, plot=False):
+        filter_fir = firwin(fil_order, cutoff / self.adc_fs)
+        filter_fir = self.freq_shift(filter_fir, shift=center_freq)
+
+        if plot:
+            plt.figure()
+            w, h = freqz(filter_fir, worN=self.om_rx)
+            plt.plot(w / np.pi, 20 * np.log10(np.abs(h)), linewidth=1.0)
+            plt.title('Frequency response of the filter')
+            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
+            plt.ylabel('Magnitude (dB)')
+            plt.show()
+
+        sig_fil = lfilter(filter_fir, 1, sig)
+
+        return sig_fil
+
+
+    def freq_shift(self, sig, shift=0, fs=200e6):
+        t = np.arange(0, len(sig)) / fs
+        sig_shift = np.exp(2 * np.pi * 1j * shift * t) * sig
+
+        return sig_shift
+
+
+    def channel_estimate(self, txtd, rxtd):
+        n_samples = min(len(txtd), len(rxtd))
+        t = self.t_rx if self.n_samples_rx<self.n_samples_tx else self.t_tx
+        freq = self.freq_rx if self.nfft_rx<self.nfft_tx else self.freq_tx
+        txtd=txtd[:n_samples]
+        rxtd=rxtd[:n_samples]
+        
+        txfd = fft(txtd)
+        rxfd = fft(rxtd)
+        # rxfd = np.roll(rxfd, 1)
+        # txfd = np.roll(txfd, 1)
+
+        tol = 1e-8
+        txmean = np.mean(np.abs(txfd)**2)
+        H_est = rxfd * np.conj(txfd) / ((np.abs(txfd)**2) + tol*txmean)
+        # H_est = rxfd * np.conj(txfd)
+        # H_est = rxfd / txfd
+
+        h_est = ifft(H_est)
+        im = np.argmax(h_est)
+        h_est = np.roll(h_est, -im + len(h_est)//50)
+        h_est = h_est.flatten()
+
+        sig = np.abs(h_est) / np.max(np.abs(h_est))
+        title = 'Channel response in the time domain'
+        xlabel = 'Time (s)'
+        ylabel = 'Normalized Magnitude (dB)'
+        self.plot_signal(t, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
+
+        sig = np.abs(fftshift(H_est))
+        title = 'Channel response in the frequency domain'
+        xlabel = 'Frequency (MHz)'
+        ylabel = 'Magnitude (dB)'
+        self.plot_signal(freq, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
+
+        return h_est
+
+
+    def channel_estimate_eq(self, txtd, rxtd):
+        txfd = fft(txtd)
+        rxfd = fft(rxtd)
+
+        # Signal parameters
+        N_cp = 256
+        N_fft = 768
+        M = 16
+        x = txtd[N_cp:]
+        X = fft(x)
+
+        plt.figure(1)
+        plt.subplot(3, 1, 1)
+
+        # Time synchronization
+        data_sync = rxtd[:4 * N_fft - 1]
+        rx = convolve(np.conj(x), data_sync, mode='full')
+        plt.plot(np.abs(rx))
+        index_ini = np.argmax(rx)
+
+        # Retrieve time-synced signal
+        N_vec = (np.tile(np.arange(N_fft), M) + np.repeat(np.arange(M), N_fft) * (N_fft + N_cp) + N_cp + 1)
+        Y = rxtd[N_vec + index_ini - 3].reshape((M, N_fft)).T
+
+        # Equalized frequency
+        H_hat = fft(Y, axis=0) / X[:,None]
+        # Averaged frequency
+        H_hat_avg = np.mean(H_hat, axis=1)
+
+        # Equalized time
+        h_hat = ifft(H_hat, axis=0)
+        h_hat = h_hat[:N_cp, :]
+
+        # Averaged time
+        h_hat_avg = np.mean(h_hat, axis=1)
+
+        # Plots
+        plt.subplot(3, 1, 2)
+        plt.plot(np.abs(h_hat_avg))
+
+        plt.subplot(3, 1, 3)
+        plt.plot(fftshift(10 * np.log10(np.abs(H_hat_avg) ** 2)))
+        plt.axis([1, N_fft, -100, 0])
+
+        H_dd = fft(h_hat.T, axis=0).T / np.sqrt(N_fft * M)
+        H_dd_log = 10 * np.log10(np.abs(H_dd) ** 2)
+        H_dd_log[H_dd_log < -130] = -130
+
+        plt.figure(2)
+        plt.pcolor(H_dd_log)
+        plt.colorbar()
+        plt.show()
+
+
+    # plot_signal(self, x, sig, mode='time_IQ', scale='linear', title='Custom Title', xlabel='Time', ylabel='Amplitude', plot_args={'color': 'red', 'linestyle': '--'}, xlim=(0, 10), ylim=(-1, 1), legend=True)
+    def plot_signal(self, x, sigs, mode='time', scale='dB10', plot_level=0, **kwargs):
+        if self.plot_level<plot_level:
+            return
+        
+        colors = ['blue', 'red', 'green', 'cyan', 'magenta', 'orange', 'purple']
+
+        if isinstance(sigs, dict):
+            sigs_dict = sigs
+        else:
+            sigs_dict = {"Signal": sigs}
+
+        plt.figure()
+        plot_args = kwargs.get('plot_args', {})
+
+        for i, sig_name in enumerate(sigs_dict.keys()):
+            if mode=='time' or mode=='time_IQ':
+                sig_plot = sigs_dict[sig_name].copy()
+            elif mode=='fft':
+                sig_plot = np.abs(fftshift(fft(sigs_dict[sig_name])))
+            elif mode=='psd':
+                freq, sig_plot = welch(sigs_dict[sig_name], self.fs, nperseg=self.nfft)
+                x = freq
+            
+            if scale=='dB10':
+                sig_plot = self.lin_to_db(sig_plot, mode='pow')
+            if scale=='dB20':
+                sig_plot = self.lin_to_db(sig_plot, mode='mag')
+            elif scale=='linear':
+                pass
+
+            if mode!='time_IQ':
+                plt.plot(x, sig_plot, color=colors[i], label=sig_name, **plot_args)
+            else:
+                plt.plot(x, np.real(sig_plot), color=colors[3*i], label='I', **plot_args)
+                plt.plot(x, np.imag(sig_plot), color=colors[3*i+1], label='Q', **plot_args)
+                plt.plot(x, np.abs(sig_plot), color=colors[3*i+2], label='Mag', **plot_args)
+
+        title = kwargs.get('title', 'Signal in time domain')
+        xlabel = kwargs.get('xlabel', 'Sample')
+        ylabel = kwargs.get('ylabel', 'Magnitude (dB)')
+
+        plt.title(title)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+        plt.minorticks_on()
+        plt.grid(0.2)
+
+        legend = kwargs.get('legend', False)
+        if legend:
+            plt.legend()
+
+        plt.autoscale()
+        if 'xlim' in kwargs:
+            plt.xlim(kwargs['xlim'])
+        if 'ylim' in kwargs:
+            ylim=kwargs['ylim']
+            if scale=='dB10':
+                ylim = (self.lin_to_db(ylim[0], mode='pow'), self.lin_to_db(ylim[1], mode='pow'))
+            if scale=='dB20':
+                ylim = (self.lin_to_db(ylim[0], mode='mag'), self.lin_to_db(ylim[1], mode='mag'))
+            plt.ylim(ylim)
+        plt.tight_layout()
+
+        # plt.axvline(x=30e6, color='g', linestyle='--', linewidth=1)
+
+        plt.show()
+
+
 
 

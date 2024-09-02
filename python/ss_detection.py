@@ -1,12 +1,12 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from signal_utils import signals
+from signal_utils import Signal_Utils
 
 
 
 
 
-class specsense_detection(signals):
+class SS_Detection(Signal_Utils):
     def __init__(self, params):
         super().__init__(params)
 

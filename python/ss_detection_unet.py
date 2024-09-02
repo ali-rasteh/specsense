@@ -1,6 +1,6 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from signal_utils import signals
+from signal_utils import Signal_Utils
 
 
 
@@ -512,7 +512,7 @@ class ObjectDetectionLoss(nn.Module):
 
 
 
-class ss_detection_Unet(signals):
+class SS_Detection_Unet(Signal_Utils):
     
     def __init__(self, params=None):
         super().__init__(params)
@@ -1131,4 +1131,3 @@ if __name__ == '__main__':
     print("Bounding Boxes:", bounding_boxes)
 
 
-    

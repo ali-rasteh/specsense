@@ -2,7 +2,7 @@ from backend import *
 from backend import be_np as np, be_scp as scipy
 
 
-class general(object):
+class General(object):
     def __init__(self, params):
         self.verbose_level = getattr(params, 'verbose_level', 5)
         self.plot_level = getattr(params, 'plot_level', 5)
@@ -34,7 +34,9 @@ class general(object):
         return self.random_str
 
 
-    def print_info(self):
+    def print_info(self, params):
+        self.print_params(params)
+
         now = datetime.datetime.now()
         current_datetime = now.strftime("%Y-%m-%d %H:%M:%S")
         # Get the latest Git commit ID
@@ -48,11 +50,6 @@ class general(object):
         print(f"Latest Git Commit ID: {latest_commit_id}")
 
 
-    def init_device_torch(self):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        print('Torch device: {}'.format(self.device))
-
-
     def print_params(self, params):
         print("Run parameters:")
         for attr in dir(params):
@@ -61,7 +58,12 @@ class general(object):
         print('\n')
 
 
-    def plt_plot(self, *args, **kwargs):
+    def init_device_torch(self):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print('Torch device: {}'.format(self.device))
+
+
+    def cupy_plt_plot(self, *args, **kwargs):
 
         args = list(args)
 
@@ -73,6 +75,14 @@ class general(object):
 
         plt.plot(*args, **kwargs)
         # plt.show()
+
+
+    def cupy_gpu_init(self):
+        if self.use_cupy and self.import_cupy:
+            self.check_gpu_usage()
+            self.print_gpu_memory()
+            self.warm_up_gpu()
+            self.gpu_cpu_compare()
 
 
     def check_cupy_gpu(self, gpu_id=0):

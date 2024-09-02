@@ -1,11 +1,11 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from filter_utils import filter_utils
+from filter_utils import Filter_Utils
 
 
 
 
-class fir_separate(filter_utils):
+class Fir_Separate(Filter_Utils):
     def __init__(self, params):
         super().__init__(params)
 

@@ -1,6 +1,6 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from signal_utils import signals
+from signal_utils import Signal_Utils
 
 
 
@@ -12,7 +12,7 @@ from signal_utils import signals
 #     return wrapper
 
 
-class filter_utils(signals):
+class Filter_Utils(Signal_Utils):
 
     def __init__(self, params):
         super().__init__(params)
