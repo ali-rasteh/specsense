@@ -50,29 +50,40 @@ class Filter_Utils(Signal_Utils):
         return wiener_filter_coef
 
 
-    def wiener_fir_param(self, sig_bw, sig_pwr, sig_cf, spatial_sig, snr, filter_order_pos, filter_order_neg):
+    def wiener_fir_param(self, sig_id, sig_bw, sig_pwr, sig_cf, spatial_sig, snr, filter_order_pos, filter_order_neg):
 
         filter_order = filter_order_pos + filter_order_neg
         filter_length = filter_order + 1
 
         N_in = spatial_sig.shape[0]
         N_out = spatial_sig.shape[1]
-        Rxx = np.zeros((filter_length, filter_length)).astype(complex)
-        N0 = (np.sum(spatial_sig[0,:]*sig_pwr*sig_bw) / np.sum(sig_bw)) / snr
+        N0 = self.noise_psd
+        sig_bw = sig_bw/self.fs
+        sig_cf = sig_cf/self.fs
 
-        for i in range(filter_length):
-            for j in range(filter_length):
-                t = i-j
-                for k in range(N_out):
-                    Rxx[i, j] += spatial_sig[0,k] * np.conj(spatial_sig[0,k]) * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * sig_pwr[k] * sig_bw[k] * np.sinc(sig_bw[k]*t)
-                if t==0:
-                    Rxx[i, j] += N0
+        t = np.arange(-(filter_length - 1), filter_length)
+        Rxx_b1 = spatial_sig[0, :] * np.conj(spatial_sig[0, :]) * sig_bw * sig_pwr
+        Rxx_b1 = Rxx_b1[:,None] * np.exp(2 * np.pi * 1j * sig_cf[:,None] * t[None,:]) * np.sinc(sig_bw[:,None] * t[None,:])
+        Rxx_b2 = np.sum(Rxx_b1, axis=0)
+        Rxx = scipy.linalg.toeplitz(Rxx_b2[filter_length-1:],Rxx_b2[:filter_length][::-1]) + N0 * np.eye(filter_length)
 
-        Ryx = np.zeros((filter_length, 1)).astype(complex)
-        for j in range(filter_length):
-            t = j - filter_order_neg
-            for k in range(N_out):
-                Ryx[j, 0] = np.conj(spatial_sig[0,k]) * sig_pwr[k] * sig_bw[k] * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * np.sinc(sig_bw[k] * t)
+        # Rxx = np.zeros((filter_length, filter_length)).astype(complex)
+        # for i in range(filter_length):
+        #     for j in range(filter_length):
+        #         t = i-j
+        #         for k in range(N_out):
+        #             Rxx[i, j] += spatial_sig[0,k] * np.conj(spatial_sig[0,k]) * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * sig_pwr[k] * sig_bw[k] * np.sinc(sig_bw[k]*t)
+        #         if t==0:
+        #             Rxx[i, j] += N0
+
+        t = np.arange(filter_length)
+        Ryx_b1 = np.conj(spatial_sig[0, sig_id]) * sig_pwr[sig_id] * sig_bw[sig_id] * np.exp(2 * np.pi * 1j * sig_cf[sig_id] * t) * np.sinc(sig_bw[sig_id] * t)
+        Ryx = Ryx_b1.reshape(-1,1)
+
+        # Ryx = np.zeros((filter_length, 1)).astype(complex)
+        # for j in range(filter_length):
+        #     t = j - filter_order_neg
+        #     Ryx[j, 0] = np.conj(spatial_sig[0,sig_id]) * sig_pwr[sig_id] * sig_bw[sig_id] * np.exp(2 * np.pi * 1j * sig_cf[sig_id] * t) * np.sinc(sig_bw[sig_id] * t)
 
         wiener_filter_coef = np.linalg.solve(Rxx, Ryx)
 
@@ -157,30 +168,51 @@ class Filter_Utils(Signal_Utils):
         filter_length = filter_order+1
         N_in = spatial_sig.shape[0]
         N_out = spatial_sig.shape[1]
-        N0 = (np.sum(np.mean(spatial_sig,axis=0) * sig_pwr * sig_bw) / np.sum(sig_bw)) / snr
+        # N0 = (np.sum(np.mean(spatial_sig,axis=0) * sig_pwr * sig_bw) / np.sum(sig_bw)) / snr
+        N0 = self.noise_psd
+        sig_bw = sig_bw / self.fs
+        sig_cf = sig_cf / self.fs
+
+        Rxx_b1 = np.zeros((N_out, N_in, N_in)).astype(complex)
+        for k in range(N_out):
+            Rxx_b1[k,:,:] = np.outer(spatial_sig[:, k], np.conj(spatial_sig[:, k])) * sig_pwr[k] * sig_bw[k]
+        t = np.arange(-(filter_length-1),filter_length)
+        Rxx_b2 = np.exp(2 * np.pi * 1j * sig_cf[:,None] * t[None,:]) * np.sinc(sig_bw[:,None] * t[None,:])
+        Rxx_b3 = Rxx_b1[:,:,:,None] * Rxx_b2[:,None,None,:]
+        Rxx_b3 = np.sum(Rxx_b3, axis=0)
 
         Rxx = np.zeros((filter_length * N_in, filter_length * N_in)).astype(complex)
         for i in range(filter_length):
             for j in range(filter_length):
                 t = j-i
-                for k in range(N_out):
-                    Rxx[i*N_in:(i+1)*N_in, j*N_in:(j+1)*N_in] += np.outer(spatial_sig[:, k], np.conj(spatial_sig[:, k])) * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * sig_pwr[k] * sig_bw[k] * np.sinc(sig_bw[k] * t)
-                if t == 0:
-                    Rxx[i*N_in:(i+1)*N_in, j*N_in:(j+1)*N_in] += N0 * np.eye(N_in)
+                Rxx[i * N_in:(i + 1) * N_in, j * N_in:(j + 1) * N_in] = Rxx_b3[:,:,t+filter_length-1] \
+                                            + float(t == 0) * N0 * np.eye(N_in)
+                # for k in range(N_out):
+                #     Rxx[i * N_in:(i + 1) * N_in, j * N_in:(j + 1) * N_in] += Rxx_b1[k] * Rxx_b2[k,t+filter_length-1]
+                #     # Rxx[i*N_in:(i+1)*N_in, j*N_in:(j+1)*N_in] += np.outer(spatial_sig[:, k], np.conj(spatial_sig[:, k])) * np.exp(2 * np.pi * 1j * sig_cf[k] * t) * sig_pwr[k] * sig_bw[k] * np.sinc(sig_bw[k] * t)
+
+
+        t = np.arange(filter_length)
+        Ryx_b1 = (np.conj(spatial_sig).T * sig_pwr[:,None] * sig_bw[:,None])
+        Ryx_b2 = np.exp(2 * np.pi * 1j * sig_cf[:,None] * t[None,:]) * np.sinc(sig_bw[:,None] * t[None,:])
 
         Ryx = np.zeros((N_out, filter_length * N_in)).astype(complex)
         for j in range(filter_length):
             t = j
-            temp = None
-            for k in range(N_out):
-                Rx_a = np.conj(spatial_sig[:, k]) * sig_pwr[k] * sig_bw[k] * np.exp(
-                        2 * np.pi * 1j * sig_cf[k] * t) * np.sinc(sig_bw[k] * t)
-                Rx_a = Rx_a.reshape(1,-1)
-                if temp is None:
-                    temp = Rx_a.copy()
-                else:
-                    temp = np.vstack((temp, Rx_a))
-            Ryx[:,j*N_in:(j+1)*N_in] = temp.copy()
+            Ryx_b2_t = Ryx_b2[:, t]
+            Ryx[:,j*N_in:(j+1)*N_in] = Ryx_b1 * Ryx_b2_t[:, None]
+
+            # temp = None
+            # for k in range(N_out):
+            #     Rx_a = Ryx_b1[k,:] * Ryx_b2[k,t].reshape(1,-1)
+            #     # Rx_a = np.conj(spatial_sig[:, k]) * sig_pwr[k] * sig_bw[k] * np.exp(
+            #     #     2 * np.pi * 1j * sig_cf[k] * t) * np.sinc(sig_bw[k] * t)
+            #     # Rx_a = Rx_a.reshape(1,-1)
+            #     if temp is None:
+            #         temp = Rx_a.copy()
+            #     else:
+            #         temp = np.vstack((temp, Rx_a))
+            # Ryx[:,j*N_in:(j+1)*N_in] = temp.copy()
 
         self.print(f'Rxx determinant: {np.linalg.det(Rxx)}',4)
 
@@ -381,22 +413,27 @@ class Filter_Utils(Signal_Utils):
         return output, grp_dly
 
 
-    def wiener_filter_design(self, rx, sigs):
-        self.print('Beginning to design the optimal wiener filter using the rx and desired signals.',2)
-
-        # N_sig = sigs.shape[0]
-        # N_r = rx.shape[0]
-        # n_samples = sigs.shape[1]
+    def wiener_filter_design(self, mode='params', rx=None, sigs=None, sig_bw=None, sig_psd=None, sig_cf=None, spatial_sig=None):
+        self.print('Beginning to design the optimal wiener filter in mode: {}'.format(mode),2)
 
         self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
-
         if self.N_r <= 1:
+        # if self.N_r <= 0:
             for i in range(self.N_sig):
                 for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = self.wiener_fir(rx, sigs[i, :].reshape((1, -1)), self.wiener_order_pos,
-                                                                         self.wiener_order_neg).reshape(-1)
+                    if mode=='sigs':
+                        self.fil_wiener_single[i][j] = self.wiener_fir(rx, sigs[i, :].reshape((1, -1)), self.wiener_order_pos,
+                                                                             self.wiener_order_neg).reshape(-1)
+                    elif mode=='params':
+                        self.fil_wiener_single[i][j] = self.wiener_fir_param(i, sig_bw, sig_psd, sig_cf, spatial_sig,
+                                                                             self.snr, self.wiener_order_pos,
+                                                                             self.wiener_order_neg).reshape(-1)
         else:
-            fil_wiener = self.wiener_fir_vector(rx, sigs, self.wiener_order_pos, self.wiener_order_neg)
+            if mode=='sigs':
+                fil_wiener = self.wiener_fir_vector(rx, sigs, self.wiener_order_pos, self.wiener_order_neg)
+            elif mode=='params':
+                fil_wiener = self.wiener_fir_vector_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr,
+                                                      self.wiener_order_pos, self.wiener_order_neg)
             for i in range(self.N_sig):
                 for j in range(self.N_r):
                     self.fil_wiener_single[i][j] = fil_wiener[i, j::self.N_r]
@@ -422,6 +459,7 @@ class Filter_Utils(Signal_Utils):
             plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
             plt.savefig(os.path.join(self.figs_dir, 'wiener_filters.pdf'), format='pdf')
             # plt.show(block=False)
+
 
         # if self.plot_level>=1:
         #     print('bw: ',self.sig_bw/1e6)
@@ -486,33 +524,6 @@ class Filter_Utils(Signal_Utils):
                 plt.xlabel('Time(s)')
                 plt.ylabel('Magnitude')
                 # plt.show(block=False)
-
-
-    def wiener_filter_param(self, sig_bw, sig_psd, sig_cf, spatial_sig):
-        self.print('Beginning to design the optimal wiener filter using parameters.',2)
-
-        self.wiener_errs_param = np.zeros(self.N_sig)
-        self.fil_wiener_single = [[None] * self.N_r for _ in range(self.N_sig)]
-
-        if self.N_r <= 1:
-            for i in range(self.N_sig):
-                for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = self.wiener_fir_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr, self.wiener_order_pos,
-                                                                               self.wiener_order_neg).reshape(-1)
-        else:
-            fil_wiener = self.wiener_fir_vector_param(sig_bw, sig_psd, sig_cf, spatial_sig, self.snr, self.wiener_order_pos, self.wiener_order_neg)
-            for i in range(self.N_sig):
-                for j in range(self.N_r):
-                    self.fil_wiener_single[i][j] = fil_wiener[i, j::self.N_r]
-
-        if self.plot_level >= 3:
-            plt.figure()
-            w, h = freqz(self.fil_wiener_single[self.sig_sel_id][self.rx_sel_id], worN=self.om)
-            plt.plot(w / np.pi, self.lin_to_db(np.abs(h), mode='mag'), linewidth=1.0)
-            plt.title('Frequency response of the parametric Wiener filter \n for the selected TX signal and RX antenna')
-            plt.xlabel(r'Normalized Frequency ($\times \pi$ rad/sample)')
-            plt.ylabel('Magnitude (dB)')
-            # plt.show(block=False)
 
 
 if __name__ == '__main__':

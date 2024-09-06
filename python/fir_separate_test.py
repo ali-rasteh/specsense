@@ -7,6 +7,141 @@ import_torch = False
 
 
 
+class Params_Class(object):
+    def __init__(self):
+        # parser = argparse.ArgumentParser()
+        # parser.add_argument("--fs", type=float, default=200e6, help="sampling frequency")
+        # parser.add_argument("--n_samples", type=float, default=2 ** 13, help="number of samples")
+        # parser.add_argument("--sharp_bw", type=float, default=10e6, help="bandwidth of sharp basis filters")
+        # parser.add_argument("--base_order_pos", type=float, default=64, help="positive order of smooth basis filters")
+        # parser.add_argument("--base_order_neg", type=float, default=0, help="negative order of smooth basis filters")
+        # parser.add_argument("--n_stage", type=float, default=1,
+        #                     help="number of stages of up/down sampling on smooth basis filters")
+        # parser.add_argument("--us_rate", type=float, default=2, help="upsampling rate")
+        # parser.add_argument("--ds_rate", type=float, default=2, help="downsampling rate")
+        # parser.add_argument("--fil_bank_mode", type=float, default=2,
+        #                     help="mode of filtering bank, 1 for whole-span coverage and 2 for TX signal coverage")
+        # parser.add_argument("--fil_mode", type=float, default=3,
+        #                     help="mode of filtering, 1: use sharp filter bank, 2: use fir_us filters, 3: use fir_ds_us filters")
+        # parser.add_argument("--N_sig", type=float, default=8, help="number of TX signals")
+        # parser.add_argument("--N_r", type=float, default=8, help="number of RX signals (# of antennas)")
+        # parser.add_argument("--snr_db", type=float, default=10, help="SNR of the received signal in dB")
+        # parser.add_argument("--ridge_coeff", type=float, default=1, help="Ridge regression coefficient")
+        # parser.add_argument("--sig_sel_id", type=float, default=0, help="selected TX signal id for plots, etc")
+        # parser.add_argument("--rx_sel_id", type=float, default=0, help="selected RX signal id for plots, etc")
+        # parser.add_argument("--rand_params", help="mode of filtering", action="store_true", default=False)
+        # parser.add_argument("--plot_level", type=int, default=0, help="level of plotting outputs")
+        # parser.add_argument("--verbose_level", type=int, default=0, help="level of printing output")
+        # parser.add_argument("--figs_dir", type=str, default='figs', help="directory to save figures")
+        # parser.add_argument("--sig_noise", help="Add noise to the signals?", action="store_true", default=False)
+        # parser.add_argument("--n_iters", type=int, default=1, help="number of iterations to report the error")
+        # parser.add_argument('--psd_range_db', nargs='+', help='range of Power spectral density in dbm/MHz',
+        #                     default=[-13, -6])  # a 20MHz signal with min 1 and max 5 mW/MHz
+        # parser.add_argument('--spat_sig_range', nargs='+', help='range of spatial signature magnitude',
+        #                     default=[0.1, 1])
+        # parser.add_argument("--overwrite_configs", action="store_true", default=False,
+        #                     help="If true, overwrites configurations")
+        # params = parser.parse_args()
+        params = SimpleNamespace()
+        params.overwrite_configs = True
+
+        if params.overwrite_configs:
+            self.fs = 200e6
+            self.fc = 5e9
+            self.n_samples = 2 ** 13
+            self.sharp_bw = 10e6
+            self.us_rate = 2
+            self.ds_rate = 2
+            self.sig_sel_id = 0
+            self.rx_sel_id = 0
+            self.figs_dir = 'figs'
+            self.spat_sig_range = [0.2, 0.9]
+            self.sig_noise = False
+            self.base_order_neg = 0
+            self.fil_bank_mode = 2  # 1 for whole-span coverage and 2 for TX signal coverage
+            self.fil_mode = 2  # 1: use sharp filter bank, 2: use fir_us filters, 3: use fir_ds_us filters
+            self.psd_range_db = [-13, -6]
+            self.az_range = [-np.pi, np.pi]
+            self.el_range = [-np.pi / 2, np.pi / 2]
+            self.use_cupy = False
+            self.gpu_id = 0
+            self.use_torch = False
+            self.fil_order_range = [1, 64]
+            self.fil_order_steps = 7
+            self.n_sig_range = [1, 16]
+            self.n_sig_steps = 5
+            self.snr_range_db = [-10, 25]
+            self.snr_steps = 8
+
+            self.rand_params = True
+            self.n_stage = 2
+            self.bw_range = [10e6, self.fs / (2 ** self.n_stage) - 10e6]
+            self.ridge_coeff = 1e-3
+
+            self.base_order_pos = 64
+            self.snr_db = 20
+            self.N_sig = 8
+            self.N_r = 8
+            self.ant_dim = 1
+            self.aoa_mode = 'uniform'  # uniform or sweep
+            self.n_iters = 10
+            self.run_sim = True
+            self.plot_wiener_heatmap = True
+            self.plot_mean = True
+            self.fo_f_id = 6
+            self.snr_f_id = 4
+            self.N_sig_f_id = 0
+            self.N_r_f_id = 0
+            self.sweep_fil_order = True
+            self.sweep_n_sig = True
+            self.sweep_snr = True
+            self.plot_level = 0
+            self.verbose_level = 0
+
+
+
+        self.figs_dir = os.path.join(os.getcwd(), self.figs_dir)
+        self.cf_range = [(-1 * self.fs / 2) + self.bw_range[1] / 2, self.fs / 2 - self.bw_range[1] / 2]
+        self.snr = Fir_Separate.db_to_lin(None, self.snr_db)
+        self.psd_range = Fir_Separate.db_to_lin(None, np.array(self.psd_range_db))
+        self.wl = constants.c / self.fc
+        self.ant_dx = self.wl / 2
+        self.ant_dy = self.wl / 2
+        self.import_cupy = import_cupy
+        self.import_torch = import_torch
+
+        if self.sweep_fil_order:
+            self.fil_orders = np.logspace(np.log10(self.fil_order_range[0]), np.log10(self.fil_order_range[1]),
+                                            self.fil_order_steps).round().astype(int)
+        else:
+            self.fil_orders = [self.base_order_pos]
+        self.fil_orders = [int(i) for i in self.fil_orders]
+
+        if self.sweep_n_sig:
+            if self.ant_dim == 1:
+                self.N_sigs = np.logspace(np.log10(self.n_sig_range[0]), np.log10(self.n_sig_range[1]),
+                                            self.n_sig_steps).round().astype(int)
+            elif self.ant_dim == 2:
+                self.N_sigs = np.arange(np.sqrt(self.n_sig_range[0]), np.sqrt(self.n_sig_range[1]) + 1)
+                self.N_sigs = (self.N_sigs ** 2)
+                if self.n_sig_steps < len(self.N_sigs):
+                    self.N_sigs = self.N_sigs[:self.n_sig_steps]
+            self.N_rs = self.N_sigs.copy()
+        else:
+            self.N_sigs = [self.N_sig]
+            self.N_rs = [self.N_r]
+        self.N_sigs = [int(i) for i in self.N_sigs]
+        self.N_rs = [int(i) for i in self.N_rs]
+
+        if self.sweep_snr:
+            self.snrs = np.logspace(self.snr_range_db[0] / 10, self.snr_range_db[1] / 10,
+                                      self.snr_steps).astype(float)
+        else:
+            self.snrs = [self.snr]
+        self.snrs = [float(i) for i in self.snrs]
+
+
+
 def run_sim(params):
     
 
@@ -55,7 +190,8 @@ def run_sim(params):
                         times.append(time.time()-start)
                         fir_separate_ins.print("generate_signals time: {0:5f}".format(times[-1]),time_print_thr)
                         start = time.time()
-                        fir_separate_ins.wiener_filter_design(rx=rx, sigs=sigs)
+                        # fir_separate_ins.wiener_filter_design(mode='sigs', rx=rx, sigs=sigs)
+                        fir_separate_ins.wiener_filter_design(mode='params', sig_bw=sig_bw, sig_psd=sig_psd, sig_cf=sig_cf, spatial_sig=spatial_sig)
                         times.append(time.time()-start)
                         fir_separate_ins.print("wiener_filter_design time: {0:5f}".format(times[-1]),time_print_thr)
                         start = time.time()
@@ -80,12 +216,6 @@ def run_sim(params):
                         fir_separate_ins.basis_filter_apply(rx=rx, sigs=sigs, mode='test')
                         times.append(time.time()-start)
                         fir_separate_ins.print("basis_filter_apply time: {0:5f}".format(times[-1]),time_print_thr)
-
-                        start = time.time()
-                        # fir_separate_ins.wiener_filter_param(sig_bw=sig_bw, sig_psd=sig_psd, sig_cf=sig_cf, spatial_sig=spatial_sig)
-                        # fir_separate_ins.basis_filter_param(sig_bw=sig_bw, sig_psd=sig_psd, sig_cf=sig_cf, spatial_sig=spatial_sig)
-                        times.append(time.time()-start)
-                        fir_separate_ins.print("wiener_filter_param and basis_filter_param time: {0:5f}".format(times[-1]),time_print_thr)
 
                         wiener_err_list.append(np.mean(fir_separate_ins.wiener_errs))
                         basis_err_list.append(np.mean(fir_separate_ins.basis_errs))
@@ -135,59 +265,60 @@ def plot_wiener_heatmap(params):
     print(aoas)
     print(daoa)
 
-    plt.figure(figsize=(len(aoa_plot)*7, 6))
+    if params.plot_level >= 1:
+        plt.figure(figsize=(len(aoa_plot)*7, 6))
 
-    for p in range(len(aoa_plot)):
-        fir_separate_ins.print('Starting experiment for plot: {}'.format(p+1), print_thr)
+        for p in range(len(aoa_plot)):
+            fir_separate_ins.print('Starting experiment for plot: {}'.format(p+1), print_thr)
 
-        params.psd_range_db = [psd_f_db, psd_f_db]
-        params.psd_range = fir_separate_ins.db_to_lin(np.array(params.psd_range_db))
-        params.az_range = [aoas[aoa_plot[p]], aoas[aoa_plot[p]]]
-        params.el_range = [el_f, el_f]
-        params.bw_range = [bw_f, bw_f]
-        params.cf_range = [sig_cfs[aoa_plot[p]], sig_cfs[aoa_plot[p]]]
-        params.spat_sig_range = [spat_sig_mag_f, spat_sig_mag_f]
+            params.psd_range_db = [psd_f_db, psd_f_db]
+            params.psd_range = fir_separate_ins.db_to_lin(np.array(params.psd_range_db))
+            params.az_range = [aoas[aoa_plot[p]], aoas[aoa_plot[p]]]
+            params.el_range = [el_f, el_f]
+            params.bw_range = [bw_f, bw_f]
+            params.cf_range = [sig_cfs[aoa_plot[p]], sig_cfs[aoa_plot[p]]]
+            params.spat_sig_range = [spat_sig_mag_f, spat_sig_mag_f]
 
-        fir_separate_ins = Fir_Separate(params)
+            fir_separate_ins = Fir_Separate(params)
 
-        (sig_bw, sig_psd, sig_cf, spatial_sig, aoa) = fir_separate_ins.gen_rand_params()
-        (rx, sigs) = fir_separate_ins.generate_signals(sig_bw=sig_bw, sig_psd=sig_psd,
-                                                       sig_cf=sig_cf, spatial_sig=spatial_sig)
-        fir_separate_ins.wiener_filter_design(rx=rx, sigs=sigs)
+            (sig_bw, sig_psd, sig_cf, spatial_sig, aoa) = fir_separate_ins.gen_rand_params()
+            (rx, sigs) = fir_separate_ins.generate_signals(sig_bw=sig_bw, sig_psd=sig_psd,
+                                                           sig_cf=sig_cf, spatial_sig=spatial_sig)
+            fir_separate_ins.wiener_filter_design(mode='sigs', rx=rx, sigs=sigs)
 
-        print('bw: ', fir_separate_ins.sig_bw / 1e6)
-        print('cf: ', fir_separate_ins.sig_cf / 1e6)
-        print('psd: ', fir_separate_ins.sig_psd)
-        print('spat_sig: ', np.mean(np.abs(fir_separate_ins.spatial_sig)))
-        print('aoa: ', fir_separate_ins.aoa)
+            print('bw: ', fir_separate_ins.sig_bw / 1e6)
+            print('cf: ', fir_separate_ins.sig_cf / 1e6)
+            print('psd: ', fir_separate_ins.sig_psd)
+            print('spat_sig: ', np.mean(np.abs(fir_separate_ins.spatial_sig)))
+            print('aoa: ', fir_separate_ins.aoa)
 
-        f_len = len(fir_separate_ins.freq)
-        h_simo = np.zeros((params.N_r, f_len), dtype=complex)
-        for rx_id in range(params.N_r):
-            w, h = freqz(fir_separate_ins.fil_wiener_single[sig_id][rx_id], worN=fir_separate_ins.om)
-            h_simo[rx_id, :] = h
+            f_len = len(fir_separate_ins.freq)
+            h_simo = np.zeros((params.N_r, f_len), dtype=complex)
+            for rx_id in range(params.N_r):
+                w, h = freqz(fir_separate_ins.fil_wiener_single[sig_id][rx_id], worN=fir_separate_ins.om)
+                h_simo[rx_id, :] = h
 
-        S = np.zeros((aoa_num, params.n_samples))
+            S = np.zeros((aoa_num, params.n_samples))
 
-        for i in range(aoa_num):
-            fir_separate_ins.print('Starting experiment for AoA: {:0.3f} Rad'.format(aoas[i]), print_thr)
-            S[i, :] = np.abs(np.dot(np.conj(spatial_sigs[:, i].reshape((-1,1)).T), h_simo)) ** 2
+            for i in range(aoa_num):
+                fir_separate_ins.print('Starting experiment for AoA: {:0.3f} Rad'.format(aoas[i]), print_thr)
+                S[i, :] = np.abs(np.dot(np.conj(spatial_sigs[:, i].reshape((-1,1)).T), h_simo)) ** 2
 
-        S = fir_separate_ins.lin_to_db(S)
+            S = fir_separate_ins.lin_to_db(S)
 
-        plt.subplot(1, len(aoa_plot), p+1)
-        plt.imshow(S, aspect='auto',
-                   extent=[fir_separate_ins.freq[0] / 1e6, fir_separate_ins.freq[-1] / 1e6, aoas[0]-daoa, aoas[-1]+daoa],
-                   cmap='viridis', interpolation='nearest',
-                   vmin=-10, vmax=np.max(S))
-        plt.colorbar(label=r'Gain $|S(\theta,f)|^2$')
-        plt.xlabel('Frequency (MHz)')
-        plt.ylabel('Angle of Arrival (Rad)')
-        plt.title('Wiener Filter Response Heatmap\n for AoA: {:0.3f} Rad, CF: {:0.3f} MHz'.format(aoas[aoa_plot[p]], sig_cfs[aoa_plot[p]]/1e6))
+            plt.subplot(1, len(aoa_plot), p+1)
+            plt.imshow(S, aspect='auto',
+                       extent=[fir_separate_ins.freq[0] / 1e6, fir_separate_ins.freq[-1] / 1e6, aoas[0]-daoa, aoas[-1]+daoa],
+                       cmap='viridis', interpolation='nearest',
+                       vmin=-10, vmax=np.max(S))
+            plt.colorbar(label=r'Gain $|S(\theta,f)|^2$')
+            plt.xlabel('Frequency (MHz)')
+            plt.ylabel('Angle of Arrival (Rad)')
+            plt.title('Wiener Filter Response Heatmap\n for AoA: {:0.3f} Rad, CF: {:0.3f} MHz'.format(aoas[aoa_plot[p]], sig_cfs[aoa_plot[p]]/1e6))
 
-    plt.suptitle('Wiener Filter Response Heatmap for {} Different AoAs'.format(len(aoa_plot)), fontsize=16)
-    plt.tight_layout()
-    plt.show()
+        plt.suptitle('Wiener Filter Response Heatmap for {} Different AoAs'.format(len(aoa_plot)), fontsize=16)
+        plt.tight_layout()
+        plt.show()
 
 
 
@@ -195,129 +326,7 @@ def plot_wiener_heatmap(params):
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--fs", type=float, default=200e6, help="sampling frequency")
-    parser.add_argument("--n_samples", type=float, default=2 ** 13, help="number of samples")
-    parser.add_argument("--sharp_bw", type=float, default=10e6, help="bandwidth of sharp basis filters")
-    parser.add_argument("--base_order_pos", type=float, default=64, help="positive order of smooth basis filters")
-    parser.add_argument("--base_order_neg", type=float, default=0, help="negative order of smooth basis filters")
-    parser.add_argument("--n_stage", type=float, default=1, help="number of stages of up/down sampling on smooth basis filters")
-    parser.add_argument("--us_rate", type=float, default=2, help="upsampling rate")
-    parser.add_argument("--ds_rate", type=float, default=2, help="downsampling rate")
-    parser.add_argument("--fil_bank_mode", type=float, default=2,
-                        help="mode of filtering bank, 1 for whole-span coverage and 2 for TX signal coverage")
-    parser.add_argument("--fil_mode", type=float, default=3,
-                        help="mode of filtering, 1: use sharp filter bank, 2: use fir_us filters, 3: use fir_ds_us filters")
-    parser.add_argument("--N_sig", type=float, default=8, help="number of TX signals")
-    parser.add_argument("--N_r", type=float, default=8, help="number of RX signals (# of antennas)")
-    parser.add_argument("--snr_db", type=float, default=10, help="SNR of the received signal in dB")
-    parser.add_argument("--ridge_coeff", type=float, default=1, help="Ridge regression coefficient")
-    parser.add_argument("--sig_sel_id", type=float, default=0, help="selected TX signal id for plots, etc")
-    parser.add_argument("--rx_sel_id", type=float, default=0, help="selected RX signal id for plots, etc")
-    parser.add_argument("--rand_params", help="mode of filtering", action="store_true", default=False)
-    parser.add_argument("--plot_level", type=int, default=0, help="level of plotting outputs")
-    parser.add_argument("--verbose_level", type=int, default=0, help="level of printing output")
-    parser.add_argument("--figs_dir", type=str, default='figs', help="directory to save figures")
-    parser.add_argument("--sig_noise", help="Add noise to the signals?", action="store_true", default=False)
-    parser.add_argument("--n_iters", type=int, default=1, help="number of iterations to report the error")
-    parser.add_argument('--psd_range_db', nargs='+', help='range of Power spectral density in dbm/MHz', default=[-13, -6])     # a 20MHz signal with min 1 and max 5 mW/MHz
-    parser.add_argument('--spat_sig_range', nargs='+', help='range of spatial signature magnitude', default=[0.1, 1])
-    params = parser.parse_args()
-
-    params.fs=200e6
-    params.fc=5e9
-    params.n_samples=2**13
-    params.sharp_bw=10e6
-    params.us_rate=2
-    params.ds_rate=2
-    params.sig_sel_id=0
-    params.rx_sel_id=0
-    params.figs_dir='figs'
-    params.spat_sig_range=[0.2 ,0.9]
-    params.sig_noise=False
-    params.base_order_neg=0
-    params.fil_bank_mode=2  # 1 for whole-span coverage and 2 for TX signal coverage
-    params.fil_mode=2  # 1: use sharp filter bank, 2: use fir_us filters, 3: use fir_ds_us filters
-    params.psd_range_db=[-13,-6]
-    params.az_range=[-np.pi,np.pi]
-    params.el_range=[-np.pi/2,np.pi/2]
-    params.use_cupy=False
-    params.gpu_id=0
-    params.use_torch=False
-    params.fil_order_range=[1, 64]
-    params.fil_order_steps=7
-    params.n_sig_range=[1, 16]
-    params.n_sig_steps=5
-    params.snr_range_db=[-10, 25]
-    params.snr_steps=8
-
-    params.rand_params=True
-    params.n_stage=2
-    params.bw_range=[10e6, params.fs/(2**params.n_stage)-10e6]
-    params.ridge_coeff=1e-3
-
-    params.base_order_pos=64
-    params.snr_db=20
-    params.N_sig=1
-    params.N_r=1
-    params.ant_dim=1
-    params.aoa_mode='uniform'       # uniform or sweep
-    params.n_iters=10
-    params.run_sim=True
-    params.plot_wiener_heatmap=True
-    params.plot_mean=True
-    params.fo_f_id=6
-    params.snr_f_id=4
-    params.N_sig_f_id=0
-    params.N_r_f_id=0
-    params.sweep_fil_order=False
-    params.sweep_n_sig=False
-    params.sweep_snr=False
-    params.plot_level=1
-    params.verbose_level=0
-
-
-
-
-
-
-    params.figs_dir = os.path.join(os.getcwd(), params.figs_dir)
-    params.cf_range=[(-1*params.fs/2)+params.bw_range[1]/2, params.fs/2-params.bw_range[1]/2]
-    params.snr=Fir_Separate.db_to_lin(None, params.snr_db)
-    params.psd_range=Fir_Separate.db_to_lin(None, np.array(params.psd_range_db))
-    params.wl = constants.c / params.fc
-    params.ant_dx = params.wl/2
-    params.ant_dy = params.wl/2
-    params.import_cupy = import_cupy
-    params.import_torch = import_torch
-
-    if params.sweep_fil_order:
-        params.fil_orders = np.logspace(np.log10(params.fil_order_range[0]), np.log10(params.fil_order_range[1]), params.fil_order_steps).round().astype(int)
-    else:
-        params.fil_orders = [params.base_order_pos]
-    params.fil_orders = [int(i) for i in params.fil_orders]
-
-    if params.sweep_n_sig:
-        if params.ant_dim==1:
-            params.N_sigs = np.logspace(np.log10(params.n_sig_range[0]), np.log10(params.n_sig_range[1]), params.n_sig_steps).round().astype(int)
-        elif params.ant_dim==2:
-            params.N_sigs = np.arange(np.sqrt(params.n_sig_range[0]), np.sqrt(params.n_sig_range[1])+1)
-            params.N_sigs = (params.N_sigs ** 2)
-            if params.n_sig_steps<len(params.N_sigs):
-                params.N_sigs = params.N_sigs[:params.n_sig_steps]
-        params.N_rs = params.N_sigs.copy()
-    else:
-        params.N_sigs = [params.N_sig]
-        params.N_rs = [params.N_r]
-    params.N_sigs = [int(i) for i in params.N_sigs]
-    params.N_rs = [int(i) for i in params.N_rs]
-
-    if params.sweep_snr:
-        params.snrs = np.logspace(params.snr_range_db[0]/10, params.snr_range_db[1]/10, params.snr_steps).astype(float)
-    else:
-        params.snrs = [params.snr]
-    params.snrs = [float(i) for i in params.snrs]
-
+    params = Params_Class()
 
     fir_separate_ins = Fir_Separate(params)
     params.use_cupy=fir_separate_ins.check_cupy_gpu(gpu_id=params.gpu_id)

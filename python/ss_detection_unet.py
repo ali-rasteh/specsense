@@ -569,7 +569,7 @@ class SS_Detection_Unet(Signal_Utils):
             transforms.ToTensor()
         ])
 
-        print("Initialized U-net Instance.")
+        self.print("Initialized U-net Instance.",thr=0)
 
 
     def generate_model(self):
@@ -610,7 +610,7 @@ class SS_Detection_Unet(Signal_Utils):
         else:
             self.model = None
 
-        print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)))
+        self.print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)),thr=0)
         
         if self.model_seg is not None:
             self.model_seg.to(self.device)
@@ -618,17 +618,17 @@ class SS_Detection_Unet(Signal_Utils):
             self.model_dethead.to(self.device)
         self.model.to(self.device)
 
-        print("Generated Neural network's model.")
+        self.print("Generated Neural network's model.",thr=0)
 
 
     def load_model(self):
         if 'model' in self.load_model_params:
             self.model.load_state_dict(torch.load(self.model_load_dir+self.model_name))
             # self.model = torch.load(self.model_load_dir+self.model_name)
-            print("Loaded Neural network model for the whole network.")
+            self.print("Loaded Neural network model for the whole network.",thr=0)
         if 'seg' in self.load_model_params:
             self.model_seg.load_state_dict(torch.load(self.model_load_dir+self.model_seg_name))
-            print("Loaded Neural network model for the U-net.")
+            self.print("Loaded Neural network model for the U-net.",thr=0)
         
 
     def count_parameters(self, model=None):
@@ -640,7 +640,7 @@ class SS_Detection_Unet(Signal_Utils):
         if self.mask_mode=='binary' or self.mask_mode=='channels':
             if self.apply_pos_weight:
                 pos_weight=torch.tensor([self.dataset_zeroone_ratio]).to(self.device)
-                print("Applied pos_weight to the loss function: {}".format(pos_weight))
+                self.print("Applied pos_weight to the loss function: {}".format(pos_weight),thr=0)
             else:
                 pos_weight=None
 
@@ -679,7 +679,7 @@ class SS_Detection_Unet(Signal_Utils):
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=self.sched_step_size, gamma=self.sched_gamma)
 
-        print("Loaded optimizer.")
+        self.print("Loaded optimizer.",thr=0)
 
 
     def generate_data_loaders(self):
@@ -699,7 +699,7 @@ class SS_Detection_Unet(Signal_Utils):
         self.val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False)
         self.test_loader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False)
 
-        print("Generated Dataloaders.")
+        self.print("Generated Dataloaders.",thr=0)
 
 
     def extract_bbox(self, mask, min_area=1, max_gap=1):
@@ -956,7 +956,7 @@ class SS_Detection_Unet(Signal_Utils):
         model.eval()
         score = 0
         mask_energy = 0
-        print("Dataloader length: {}".format(len(data_loader)))
+        self.print("Dataloader length: {}".format(len(data_loader)),thr=0)
         with torch.no_grad():
             for data, gt in data_loader:
                 data = data.to(self.device)
@@ -1008,7 +1008,7 @@ class SS_Detection_Unet(Signal_Utils):
 
     def train_model(self):
         if self.train:
-            print("Beginning to train the whole Neural Network...")
+            self.print("Beginning to train the whole Neural Network...",thr=0)
             if self.problem_mode=='segmentation':
                 self.train_model_one(mode='segmentation')
             elif self.problem_mode=='detection' and self.det_mode=='contours':
@@ -1029,7 +1029,7 @@ class SS_Detection_Unet(Signal_Utils):
 
     def train_model_one(self, mode='segmentation'):
         if self.train:
-            print("Beginning to train the Neural Network in mode: {}...".format(mode))
+            self.print("Beginning to train the Neural Network in mode: {}...".format(mode),thr=0)
             if mode=='segmentation' or mode=='detection_end2end' or mode=='detection_contours' or mode=='detection_features':
                 model = self.model
                 name = ''
@@ -1077,26 +1077,26 @@ class SS_Detection_Unet(Signal_Utils):
                     optimizer.step()
                     epoch_loss += loss.item()
                     if (batch_id+1) % self.nbatch_log == 0 and self.nbatch_log != -1:
-                        print(f"Batch {batch_id + 1}/{len(self.train_loader)}, Loss: {loss.item()}, lr: {scheduler.get_last_lr()}")
+                        self.print(f"Batch {batch_id + 1}/{len(self.train_loader)}, Loss: {loss.item()}, lr: {scheduler.get_last_lr()}",thr=0)
                     batch_id += 1
 
-                print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {scheduler.get_last_lr()}\n")
+                self.print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {scheduler.get_last_lr()}\n",thr=0)
                 # self.test_model(mode='test')
                 
                 if ((epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1) or (epoch+1 == n_epochs):
                     if self.save_model:
                         torch.save(model.state_dict(), self.model_save_dir+self.random_str+name+'_weights_{}.pth'.format(epoch + 1))
                         torch.save(model, self.model_save_dir+self.random_str+name+'_model_{}.pth'.format(epoch + 1))
-                        print("Saved the Neural Network's model")
+                        self.print("Saved the Neural Network's model",thr=0)
                     self.test_acc = self.evaluate_model(model, self.test_loader, mode=mode)
-                    print('Accuracy on test data: {}\n'.format(self.test_acc))
+                    self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
 
                 scheduler.step()
     
 
     def test_model(self, mode='both', eval_mode=None):
         if self.test:
-            print("Starting to test the Neural Network...")
+            self.print("Starting to test the Neural Network...",thr=0)
             if eval_mode is None:
                 if self.problem_mode=='segmentation':
                     eval_mode='segmentation'
@@ -1113,9 +1113,9 @@ class SS_Detection_Unet(Signal_Utils):
 
             if mode=='both':
                 self.train_acc = self.evaluate_model(self.model, self.train_loader, mode=eval_mode)
-                print('Accuracy on train data: {}'.format(self.train_acc))
+                self.print('Accuracy on train data: {}'.format(self.train_acc),thr=0)
             self.test_acc = self.evaluate_model(self.model, self.test_loader, mode=eval_mode)
-            print('Accuracy on test data: {}\n'.format(self.test_acc))
+            self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
 
 
 
@@ -1123,10 +1123,10 @@ class SS_Detection_Unet(Signal_Utils):
 if __name__ == '__main__':
     from ss_detection_test import params_class
     params = params_class()
-    ss_det_unet = ss_detection_Unet(params)
+    ss_det_unet = SS_Detection_Unet(params)
     # mask = np.array([0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     # mask = mask.reshape(1, 1, -1)
-    mask = np.random.randint(0, 2, (40000,1,1024))
+    mask = randint(0, 2, (40000,1,1024))
     bounding_boxes = ss_det_unet.extract_bbox_efficient(mask, min_area=2, max_gap=2)
     print("Bounding Boxes:", bounding_boxes)
 

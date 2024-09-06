@@ -44,7 +44,7 @@ class Fir_Separate(Filter_Utils):
 
         if self.fil_bank_mode == 1:
             self.fil_bank_num = int(self.fs / self.sharp_bw)
-            self.fil_cf = (-self.fs / 2) + (self.sharp_bw / 2) + np.linspace(0, self.fil_bank_num - 1, self.fil_bank_num) * self.sharp_bw
+            self.fil_cf = (-self.fs / 2) + (self.sharp_bw / 2) + np.arange(self.fil_bank_num) * self.sharp_bw
         elif self.fil_bank_mode == 2:
             self.fil_bank_num = self.N_sig
             self.fil_cf = sig_cf.copy()
@@ -92,7 +92,7 @@ class Fir_Separate(Filter_Utils):
 
         for i in range(self.fil_bank_num):
             for j in range(self.N_r):
-                plot_procedure = i == int(3 * self.fil_bank_num / 4) and j == self.rx_sel_id and self.plot_level >= 5
+                plot_procedure = (i == int(3 * self.fil_bank_num / 4) and j == self.rx_sel_id and self.plot_level >= 5)
                 if self.fil_mode == 1:
                     # sig_bank[i][j] = np.convolve(rx[j, :], fil_bank[i], mode='same')
                     self.sig_bank[i][j] = lfilter(self.fil_bank[i], np.array([1]), rx[j, :])

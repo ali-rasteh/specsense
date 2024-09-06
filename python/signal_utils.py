@@ -49,12 +49,12 @@ class Signal_Utils(General):
         self.t = getattr(params, 't', np.arange(0, self.n_samples) / self.fs)
         self.t_tx = getattr(params, 't_tx', np.arange(0, self.n_samples_tx) / self.fs_tx)
         self.t_rx = getattr(params, 't_rx', np.arange(0, self.n_samples_rx) / self.fs_rx)
-        self.freq = getattr(params, 'freq', ((np.arange(0, self.nfft) / self.nfft) - 0.5) * self.fs)
-        self.freq_tx = getattr(params, 'freq_tx', ((np.arange(0, self.nfft_tx) / self.nfft_tx) - 0.5) * self.fs_tx)
-        self.freq_rx = getattr(params, 'freq_rx', ((np.arange(0, self.nfft_rx) / self.nfft_rx) - 0.5) * self.fs_rx)
-        self.om = getattr(params, 'om', np.linspace(-np.pi, np.pi, self.nfft))
-        self.om_tx = getattr(params, 'om_tx', np.linspace(-np.pi, np.pi, self.nfft_tx))
-        self.om_rx = getattr(params, 'om_rx', np.linspace(-np.pi, np.pi, self.nfft_rx))
+        self.freq = getattr(params, 'freq', np.linspace(-0.5, 0.5, self.nfft, endpoint=True) * self.fs)
+        self.freq_tx = getattr(params, 'freq_tx', np.linspace(-0.5, 0.5, self.nfft_tx, endpoint=True) * self.fs_tx)
+        self.freq_rx = getattr(params, 'freq_rx', np.linspace(-0.5, 0.5, self.nfft_rx, endpoint=True) * self.fs_rx)
+        self.om = getattr(params, 'om', np.linspace(-np.pi, np.pi, self.nfft, endpoint=True))
+        self.om_tx = getattr(params, 'om_tx', np.linspace(-np.pi, np.pi, self.nfft_tx, endpoint=True))
+        self.om_rx = getattr(params, 'om_rx', np.linspace(-np.pi, np.pi, self.nfft_rx, endpoint=True))
 
 
     def lin_to_db(self, x, mode='pow'):
@@ -69,6 +69,53 @@ class Signal_Utils(General):
         elif mode == 'mag':
             return 10**(x/20)
         
+
+    def sinc(self, x):
+        sinc = np.sinc(x)       # sin(pi.x)/(pi.x)
+        # sinc = np.sin(np.pi * x) / (np.pi * x)
+        return sinc
+
+    def rect(self, x):
+        rect = np.where(np.abs(x) <= 0.5, 1.0, 0.0)
+        return rect
+
+    def plot_rect_sync(self):
+        N = 1024  # Number of samples
+        # T = 10  # Sampling interval
+        # fs = N/T
+        # t = np.linspace(-T/2, T/2, N, endpoint=False)
+        # freq = fftshift(np.fft.fftfreq(N, T))
+        # freq = np.linspace(-fs/2, fs/2, N, endpoint=True)
+        n = np.arange(-N / 2, N / 2)
+        om = np.linspace(-np.pi, np.pi, N, endpoint=True)
+        omega = np.pi / 16
+        a = omega / np.pi
+        M = 20
+
+        sinc = self.sinc(a * n)
+        rect = self.rect(n / M)
+        self.plot_signal(n, {"sinc": np.abs(sinc)}, scale='linear', legend=True)
+        self.plot_signal(om / np.pi,
+                            {"sinc_fft": np.abs(fftshift(fft(sinc))), "rect": self.rect(om / (2 * np.pi * a)) / a},
+                            scale='linear', legend=True)
+        self.plot_signal(n, {"rect": np.abs(rect)}, scale='linear', legend=True)
+        self.plot_signal(om / np.pi, {"rect_fft": np.abs(fftshift(fft(rect))),"sinc": np.abs(self.sinc(om * (M + 1) / 2 / np.pi) * (M + 1))},
+                            scale='linear', legend=True)
+
+    def dft(self, x):
+        N = len(x)
+        n = np.arange(N)
+        k = n.reshape((N, 1))
+        # Create the twiddle factor matrix (N x N)
+        twiddle_factor = np.exp(-2j * np.pi * k * n / N)
+        # Perform matrix multiplication
+        X = np.dot(twiddle_factor, x)
+        return X
+
+    def psd(self, x):
+        freq, psd = welch(x, self.fs, nperseg=self.nfft)
+        return (freq, psd)
+
 
     def upsample(self, signal, up=2):
         """
@@ -271,7 +318,7 @@ class Signal_Utils(General):
             fil_sig = firwin(1001, sig_bw[i] / self.fs)
             # sigs[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * t) * sig_psd[i] * np.convolve(noise, fil_sig, mode='same')
             sigs[i, :] = np.exp(2 * np.pi * 1j * sig_cf[i] * self.t) * np.sqrt(
-                sig_psd[i]*(self.fs/2)) * lfilter(fil_sig, np.array([1]), self.gen_noise(mode='complex'))
+                sig_psd[i]*self.fs/2) * lfilter(fil_sig, np.array([1]), self.gen_noise(mode='complex'))
             rx += np.outer(spatial_sig[:, i], sigs[i, :])
 
             if self.sig_noise:
@@ -281,10 +328,12 @@ class Signal_Utils(General):
 
         yvar = np.mean(np.abs(rx) ** 2, axis=1)
         wvar = yvar / self.snr
+        self.noise_psd = np.mean(wvar/self.fs).astype(complex)
+        # noise_rx = np.sqrt(wvar[:, None] / 2) * noise
+        # noise_rx = np.outer(np.sqrt(wvar / 2), self.gen_noise(mode='complex'))
         noise_rx = np.array([self.gen_noise(mode='complex') for _ in range(self.N_r)])
-        # rx += np.sqrt(wvar[:, None] / 2) * noise
-        # rx += np.outer(np.sqrt(wvar / 2), self.gen_noise(mode='complex'))
-        rx += np.sqrt(wvar[:, None] / 2) * noise_rx
+        noise_rx = np.sqrt(wvar[:, None] / 2) * noise_rx
+        rx += noise_rx
 
         if self.plot_level >= 2:
             plt.figure()
@@ -456,7 +505,7 @@ class Signal_Utils(General):
     
 
     def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None, snr_range=np.array([10,10]), mask_mode='binary'): 
-        print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, n_sigs_p_dist:{}, sig_size={}-{}, snrs={:0.3f}-{:0.3f}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, n_sigs_p_dist, sig_size_min, sig_size_max, snr_range[0], snr_range[1]))
+        self.print("Starting to generate PSD dataset with n_dataset={}, shape={}, n_sigs={}-{}, n_sigs_p_dist:{}, sig_size={}-{}, snrs={:0.3f}-{:0.3f}...".format(n_dataset, shape, n_sigs_min, n_sigs_max, n_sigs_p_dist, sig_size_min, sig_size_max, snr_range[0], snr_range[1]),thr=0)
         
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         data = []
@@ -487,7 +536,7 @@ class Signal_Utils(General):
         classes = np.array(classes)
         np.savez(dataset_path, data=data, masks=masks, bboxes=bboxes, objectnesses=objectnesses, classes=classes)
         
-        print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}")
+        self.print(f"Dataset of data shape {data.shape} and mask shape {masks.shape} saved to {dataset_path}",thr=0)
 
 
     def generate_tone(self, f=10e6, sig_mode='tone_2', gen_mode='fft'):
@@ -576,6 +625,7 @@ class Signal_Utils(General):
 
 
     def filter(self, sig, center_freq=0, cutoff=50e6, fil_order=1000, plot=False):
+        self.print("Starting to filter the signal...", thr=2)
         filter_fir = firwin(fil_order, cutoff / self.adc_fs)
         filter_fir = self.freq_shift(filter_fir, shift=center_freq)
 
@@ -594,6 +644,7 @@ class Signal_Utils(General):
 
 
     def freq_shift(self, sig, shift=0, fs=200e6):
+        self.print("Shifting the signal in frequency domain...", thr=2)
         t = np.arange(0, len(sig)) / fs
         sig_shift = np.exp(2 * np.pi * 1j * shift * t) * sig
 
@@ -601,6 +652,8 @@ class Signal_Utils(General):
 
 
     def channel_estimate(self, txtd, rxtd):
+        self.print("Starting to estimate the channel response...", thr=2)
+
         n_samples = min(len(txtd), len(rxtd))
         t = self.t_rx if self.n_samples_rx<self.n_samples_tx else self.t_tx
         freq = self.freq_rx if self.nfft_rx<self.nfft_tx else self.freq_tx
@@ -623,22 +676,25 @@ class Signal_Utils(General):
         h_est = np.roll(h_est, -im + len(h_est)//50)
         h_est = h_est.flatten()
 
-        sig = np.abs(h_est) / np.max(np.abs(h_est))
-        title = 'Channel response in the time domain'
-        xlabel = 'Time (s)'
-        ylabel = 'Normalized Magnitude (dB)'
-        self.plot_signal(t, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
+        if self.plot_level >= 2:
+            sig = np.abs(h_est) / np.max(np.abs(h_est))
+            title = 'Channel response in the time domain'
+            xlabel = 'Time (s)'
+            ylabel = 'Normalized Magnitude (dB)'
+            self.plot_signal(t, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
 
-        sig = np.abs(fftshift(H_est))
-        title = 'Channel response in the frequency domain'
-        xlabel = 'Frequency (MHz)'
-        ylabel = 'Magnitude (dB)'
-        self.plot_signal(freq, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
+            sig = np.abs(fftshift(H_est))
+            title = 'Channel response in the frequency domain'
+            xlabel = 'Frequency (MHz)'
+            ylabel = 'Magnitude (dB)'
+            self.plot_signal(freq, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
 
         return h_est
 
 
     def channel_estimate_eq(self, txtd, rxtd):
+        self.print("Starting to estimate the channel response with equalization...", thr=2)
+
         txfd = fft(txtd)
         rxfd = fft(rxtd)
 
@@ -649,13 +705,9 @@ class Signal_Utils(General):
         x = txtd[N_cp:]
         X = fft(x)
 
-        plt.figure(1)
-        plt.subplot(3, 1, 1)
-
         # Time synchronization
         data_sync = rxtd[:4 * N_fft - 1]
         rx = convolve(np.conj(x), data_sync, mode='full')
-        plt.plot(np.abs(rx))
         index_ini = np.argmax(rx)
 
         # Retrieve time-synced signal
@@ -674,22 +726,26 @@ class Signal_Utils(General):
         # Averaged time
         h_hat_avg = np.mean(h_hat, axis=1)
 
-        # Plots
-        plt.subplot(3, 1, 2)
-        plt.plot(np.abs(h_hat_avg))
-
-        plt.subplot(3, 1, 3)
-        plt.plot(fftshift(10 * np.log10(np.abs(H_hat_avg) ** 2)))
-        plt.axis([1, N_fft, -100, 0])
-
         H_dd = fft(h_hat.T, axis=0).T / np.sqrt(N_fft * M)
         H_dd_log = 10 * np.log10(np.abs(H_dd) ** 2)
         H_dd_log[H_dd_log < -130] = -130
 
-        plt.figure(2)
-        plt.pcolor(H_dd_log)
-        plt.colorbar()
-        plt.show()
+        if self.plot_level >= 2:
+            plt.figure(1)
+            plt.subplot(3, 1, 1)
+            plt.plot(np.abs(rx))
+
+            plt.subplot(3, 1, 2)
+            plt.plot(np.abs(h_hat_avg))
+
+            plt.subplot(3, 1, 3)
+            plt.plot(fftshift(10 * np.log10(np.abs(H_hat_avg) ** 2)))
+            plt.axis([1, N_fft, -100, 0])
+
+            plt.figure(2)
+            plt.pcolor(H_dd_log)
+            plt.colorbar()
+            plt.show()
 
 
     # plot_signal(self, x, sig, mode='time_IQ', scale='linear', title='Custom Title', xlabel='Time', ylabel='Amplitude', plot_args={'color': 'red', 'linestyle': '--'}, xlim=(0, 10), ylim=(-1, 1), legend=True)
@@ -761,5 +817,10 @@ class Signal_Utils(General):
         plt.show()
 
 
+if __name__=='__main__':
+    from fir_separate_test import Params_Class
+    params = Params_Class()
+    Signals = Signal_Utils(params)
+    Signals.plot_rect_sync()
 
 

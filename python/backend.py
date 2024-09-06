@@ -44,11 +44,14 @@ else:
     be_scp_sig = importlib.import_module('scipy.signal')
 
 if import_torch:
-    import torch
-    from torch import nn, optim
-    import torch.nn.functional as F
-    from torch.utils.data import Dataset, DataLoader, random_split
-    import torchvision.transforms as transforms
+    try:
+        import torch
+        from torch import nn, optim
+        import torch.nn.functional as F
+        from torch.utils.data import Dataset, DataLoader, random_split
+        import torchvision.transforms as transforms
+    except:
+        pass
 
 if import_pynq:
     try:
