@@ -71,6 +71,8 @@ class Params_Class(object):
         self.lambda_class=1.0
         self.contours_min_area=1
         self.contours_max_gap=20
+        self.verbose_level=5
+        self.plot_level=5
 
         # Constant parameters
         self.fs=200e6
@@ -80,8 +82,10 @@ class Params_Class(object):
         self.gt_mask_thr=0.5
         self.apply_pos_weight=False
         self.noise_power=1.0
-        self.ML_thr_coeff=1.5
+        self.ML_thr_coeff=1.9
         self.ML_thr=self.ML_thr_coeff*10.0*self.noise_power
+        self.ML_PFA=1e-6
+        self.ML_thr_mode='static'    # analysis or data or static
         self.eval_smooth=1e-6
         self.train_ratio=0.8
         self.val_ratio=0.0
@@ -141,7 +145,8 @@ if __name__ == '__main__':
     params.random_str = ss_det.gen_random_str()
     ss_det.print_info(params)
     ss_det.plot_MD_vs_SNR()
-    ss_det.plot_MD_vs_DoF()
+    ss_det.plot_MD_vs_DoF(mode=1)
+    ss_det.plot_MD_vs_DoF(mode=2)
     if params.generate_dataset:
         if params.train:
             ss_det.generate_psd_dataset(dataset_path=params.data_dir+params.dataset_name, n_dataset=params.n_dataset, shape=params.shape, n_sigs_min=params.n_sigs_min, n_sigs_max=params.n_sigs_max, n_sigs_p_dist=params.n_sigs_p_dist, sig_size_min=params.sig_size_min, sig_size_max=params.sig_size_max, snr_range=params.snr_range, mask_mode=params.mask_mode)
@@ -162,7 +167,7 @@ if __name__ == '__main__':
         os.remove(params.data_dir+params.dataset_name)
 
 
-    det_rates = {}
+    metrics = {"det_rate": {}, "missed_rate": {}, "fa_rate": {}}
     if 'nn' in params.sweep_snr and params.test:
         det_rate = {}
         for size in params.sw_fixed_size_list:
@@ -182,7 +187,7 @@ if __name__ == '__main__':
                 if params.remove_dataset and os.path.exists(dataset_path):
                     os.remove(dataset_path)
         ss_det.print("NN detection rate for SNRs: {}\n".format(det_rate),thr=0)
-        det_rates['snr_NN'] = det_rate.copy()
+        metrics['det_rate']['snr_NN'] = det_rate.copy()
 
     if 'nn' in params.sweep_size and params.test:
         det_rate = {}
@@ -203,46 +208,50 @@ if __name__ == '__main__':
                 if params.remove_dataset and os.path.exists(dataset_path):
                     os.remove(dataset_path)
         ss_det.print("NN detection rate for signal sizes: {}\n".format(det_rate),thr=0)
-        det_rates['size_NN'] = det_rate.copy()
+        metrics['det_rate']['size_NN'] = det_rate.copy()
 
     if 'ml' in params.sweep_snr or 'ml' in params.sweep_size:
         params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)
 
     if 'ml' in params.sweep_snr:
-        det_rates['snr_ML'] = {}
-        det_rates['snr_ML_binary_search'] = {}
+        for metric in metrics:
+            metrics[metric]['snr_ML'] = {}
+            metrics[metric]['snr_ML_binary_search'] = {}
         for size in params.sw_fixed_size_list:
             fixed_size = tuple([size for _ in range(len(params.shape))])
 
-            det_rate = ss_det.sweep_snrs(snrs=params.sw_snrs, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, sig_size_min=fixed_size, sig_size_max=fixed_size)
-            ss_det.print("ML detection rate for SNRs for size:{} : {}\n".format(size, det_rate['ML']),thr=0)
-            ss_det.print("ML-binary search detection rate for SNRs for size:{} : {}\n".format(size, det_rate['ML_binary_search']),thr=0)
-            det_rates['snr_ML'][size] = det_rate['ML'].copy()
-            det_rates['snr_ML_binary_search'][size] = det_rate['ML_binary_search'].copy()
+            sweep_metrics = ss_det.sweep_snrs(snrs=params.sw_snrs, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, sig_size_min=fixed_size, sig_size_max=fixed_size)
+            ss_det.print("ML metrics for SNRs for size:{} : {}\n".format(size, {key:sweep_metrics[key]['ML'] for key in list(sweep_metrics.keys())}),thr=0)
+            ss_det.print("ML-binary search metrics for SNRs for size:{} : {}\n".format(size, {key:sweep_metrics[key]['ML_binary_search'] for key in list(sweep_metrics.keys())}),thr=0)
+            for metric in metrics:
+                metrics[metric]['snr_ML'][size] = sweep_metrics[metric]['ML'].copy()
+                metrics[metric]['snr_ML_binary_search'][size] = sweep_metrics[metric]['ML_binary_search'].copy()
 
     if 'ml' in params.sweep_size:
-        det_rates['size_ML'] = {}
-        det_rates['size_ML_binary_search'] = {}
+        for metric in metrics:
+            metrics[metric]['size_ML'] = {}
+            metrics[metric]['size_ML_binary_search'] = {}
         for snr in params.sw_fixed_snr_list:
             fixed_snr_range = np.array([snr, snr]).astype(float)
 
-            det_rate = ss_det.sweep_sizes(sizes=params.sw_sizes, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, snr_range=fixed_snr_range)
-            ss_det.print("ML detection rate for signal sizes for snr: {} : {}\n".format(snr, det_rate['ML']),thr=0)
-            ss_det.print("ML-binary search detection rate for signal sizes for snr: {} : {}\n".format(snr, det_rate['ML_binary_search']),thr=0)
-            det_rates['size_ML'][snr] = det_rate['ML'].copy()
-            det_rates['size_ML_binary_search'][snr] = det_rate['ML_binary_search'].copy()
+            sweep_metrics = ss_det.sweep_sizes(sizes=params.sw_sizes, n_sigs_min=params.sw_n_sigs_min, n_sigs_max=params.sw_n_sigs_max, n_sigs_p_dist=params.sw_n_sigs_p_dist, snr_range=fixed_snr_range)
+            ss_det.print("ML metrics for signal sizes for snr: {} : {}\n".format(snr, {key:sweep_metrics[key]['ML'] for key in list(sweep_metrics.keys())}),thr=0)
+            ss_det.print("ML-binary search metrics for signal sizes for snr: {} : {}\n".format(snr, {key:sweep_metrics[key]['ML_binary_search'] for key in list(sweep_metrics.keys())}),thr=0)
+            for metric in metrics:
+                metrics[metric]['size_ML'][snr] = sweep_metrics[metric]['ML'].copy()
+                metrics[metric]['size_ML_binary_search'][snr] = sweep_metrics[metric]['ML_binary_search'].copy()
 
 
-    # det_rates['snr_NN'] = {0.5: 0.00013185336267108132, 0.6608103647168022: 0.0015672112395619337, 0.8733406762343062: 0.013371356799185668, 1.1542251415688212: 0.07687240992168713, 1.5254478735307908: 0.24722358791431434, 2.0160635313287045: 0.4892272824520826, 2.6644713548591303: 0.685144745282865, 3.5214205755638686: 0.8048406510052658, 4.653982429719222: 0.8767833832007426, 6.150799653536695: 0.9207975303991931, 8.129024324707132: 0.9500897710658429, 10.74348705760295: 0.9673707998434445, 14.198815201729696: 0.9787792107978044, 18.765448504002958: 0.9866002537129577, 24.800805740009125: 0.9914856492413843, 32.77725897265199: 0.9949680512864293, 43.319104912270475: 0.9971241964469626, 57.25142703256576: 0.9982189919336162, 75.66467275589427: 0.9988371361053048, 100.0: 0.9989291927348432}
-    # det_rates['size_NN'] = {(1,): 0.005061195744653047, (2,): 0.022283786251449653, (3,): 0.05467798238992691, (4,): 0.10808066050410271, (5,): 0.1804213700771332, (7,): 0.3483198815822601, (10,): 0.562700422668457, (13,): 0.6936767197608947, (18,): 0.8032814272880554, (24,): 0.8588570240974426, (33,): 0.8996480465888977, (44,): 0.9263599509239197, (59,): 0.9473758228302002, (79,): 0.9623713345527649, (106,): 0.9731439858436585, (142,): 0.9799017094612121, (191,): 0.9832067944526672, (256,): 0.9823403435707092}
-    # det_rates['snr_ML'] = {0.5: 0.0, 0.6608103647168022: 0.0, 0.8733406762343062: 0.20918055555555556, 1.1542251415688212: 0.6687270622895626, 1.5254478735307908: 0.9220299145299148, 2.0160635313287045: 0.951387939221273, 2.6644713548591303: 0.9756111111111115, 3.5214205755638686: 0.9897777777777783, 4.653982429719222: 1.0000000000000004, 6.150799653536695: 0.9977777777777783, 8.129024324707132: 0.9977777777777783, 10.74348705760295: 1.0000000000000004, 14.198815201729696: 1.0000000000000004, 18.765448504002958: 1.0000000000000004, 24.800805740009125: 1.0000000000000004, 32.77725897265199: 1.0000000000000004, 43.319104912270475: 1.0000000000000004, 57.25142703256576: 1.0000000000000004, 75.66467275589427: 1.0000000000000004, 100.0: 1.0000000000000004}
-    # det_rates['size_ML'] = {(1,): 0.0, (2,): 0.0, (3,): 0.0, (4,): 0.0075, (5,): 0.0, (7,): 0.05830128205128205, (10,): 0.19539793539793546, (13,): 0.21997448048597426, (18,): 0.47818304223744723, (24,): 0.7435307446661368, (33,): 0.8897729185120934, (44,): 0.9282022750425882, (59,): 0.9422651951653213, (79,): 0.9559282061772282, (106,): 0.9653049450759268, (142,): 0.9750333068426427, (191,): 0.9798842378658682, (256,): 0.986466015034174}
+    # metrics['snr_NN'] = {0.5: 0.00013185336267108132, 0.6608103647168022: 0.0015672112395619337, 0.8733406762343062: 0.013371356799185668, 1.1542251415688212: 0.07687240992168713, 1.5254478735307908: 0.24722358791431434, 2.0160635313287045: 0.4892272824520826, 2.6644713548591303: 0.685144745282865, 3.5214205755638686: 0.8048406510052658, 4.653982429719222: 0.8767833832007426, 6.150799653536695: 0.9207975303991931, 8.129024324707132: 0.9500897710658429, 10.74348705760295: 0.9673707998434445, 14.198815201729696: 0.9787792107978044, 18.765448504002958: 0.9866002537129577, 24.800805740009125: 0.9914856492413843, 32.77725897265199: 0.9949680512864293, 43.319104912270475: 0.9971241964469626, 57.25142703256576: 0.9982189919336162, 75.66467275589427: 0.9988371361053048, 100.0: 0.9989291927348432}
+    # metrics['size_NN'] = {(1,): 0.005061195744653047, (2,): 0.022283786251449653, (3,): 0.05467798238992691, (4,): 0.10808066050410271, (5,): 0.1804213700771332, (7,): 0.3483198815822601, (10,): 0.562700422668457, (13,): 0.6936767197608947, (18,): 0.8032814272880554, (24,): 0.8588570240974426, (33,): 0.8996480465888977, (44,): 0.9263599509239197, (59,): 0.9473758228302002, (79,): 0.9623713345527649, (106,): 0.9731439858436585, (142,): 0.9799017094612121, (191,): 0.9832067944526672, (256,): 0.9823403435707092}
+    # metrics['snr_ML'] = {0.5: 0.0, 0.6608103647168022: 0.0, 0.8733406762343062: 0.20918055555555556, 1.1542251415688212: 0.6687270622895626, 1.5254478735307908: 0.9220299145299148, 2.0160635313287045: 0.951387939221273, 2.6644713548591303: 0.9756111111111115, 3.5214205755638686: 0.9897777777777783, 4.653982429719222: 1.0000000000000004, 6.150799653536695: 0.9977777777777783, 8.129024324707132: 0.9977777777777783, 10.74348705760295: 1.0000000000000004, 14.198815201729696: 1.0000000000000004, 18.765448504002958: 1.0000000000000004, 24.800805740009125: 1.0000000000000004, 32.77725897265199: 1.0000000000000004, 43.319104912270475: 1.0000000000000004, 57.25142703256576: 1.0000000000000004, 75.66467275589427: 1.0000000000000004, 100.0: 1.0000000000000004}
+    # metrics['size_ML'] = {(1,): 0.0, (2,): 0.0, (3,): 0.0, (4,): 0.0075, (5,): 0.0, (7,): 0.05830128205128205, (10,): 0.19539793539793546, (13,): 0.21997448048597426, (18,): 0.47818304223744723, (24,): 0.7435307446661368, (33,): 0.8897729185120934, (44,): 0.9282022750425882, (59,): 0.9422651951653213, (79,): 0.9559282061772282, (106,): 0.9653049450759268, (142,): 0.9750333068426427, (191,): 0.9798842378658682, (256,): 0.986466015034174}
     
-    ss_det.print(det_rates,thr=0)
+    ss_det.print(metrics,thr=0)
     if params.sweep_snr:
-        ss_det.plot(plot_dic=det_rates, mode='snr')
+        ss_det.plot(plot_dic=metrics, mode='snr')
     if params.sweep_size:
-        ss_det.plot(plot_dic=det_rates, mode='size')
+        ss_det.plot(plot_dic=metrics, mode='size')
 
 
 

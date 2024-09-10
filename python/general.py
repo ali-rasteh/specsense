@@ -197,4 +197,8 @@ class General(object):
         return out
 
 
+    def unique_list(self, input_list):
+        seen = set()
+        input_list = [x for x in input_list if not (x in seen or seen.add(x))]
+        return input_list
 

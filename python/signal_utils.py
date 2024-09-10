@@ -484,24 +484,32 @@ class Signal_Utils(General):
         return tuple(union)
 
 
-    def compute_slices_similarity(self, slice_1, slice_2):
-        if slice_1 is None and slice_2 is not None:
-            ratio = 0.0
-        if slice_2 is None and slice_1 is not None:
-            ratio = 0.0
-        if slice_1 is None and slice_2 is None:
-            ratio = 1.0
+    def compute_slices_similarity(self, predicted, target):
+        if predicted is None and target is not None:
+            det_rate = 0.0
+            missed = 1.0
+            false_alarm = 0.0
+        elif target is None and predicted is not None:
+            det_rate = 0.0
+            missed = 0.0
+            false_alarm = 1.0
+        elif predicted is None and target is None:
+            det_rate = 1.0
+            missed = 0.0
+            false_alarm = 0.0
         else:
-            intersection = self.slice_intersection(slice_1, slice_2)
-            union = self.slice_union(slice_1, slice_2)
+            intersection = self.slice_intersection(predicted, target)
+            union = self.slice_union(predicted, target)
             intersection_size = self.slice_size(intersection)
             union_size = self.slice_size(union)
 
             # max_size = max(self.slice_size(slice_1), self.slice_size(slice_2))
-            # ratio = intersection_size / max_size
-            ratio = intersection_size / union_size
+            # det_rate = intersection_size / max_size
+            det_rate = intersection_size / union_size
+            missed = 0.0
+            false_alarm = 0.0
 
-        return ratio
+        return (det_rate, missed, false_alarm)
     
 
     def generate_psd_dataset(self, dataset_path='./data/psd_dataset.npz', n_dataset=1000, shape=(1000,), n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, sig_size_min=None, sig_size_max=None, snr_range=np.array([10,10]), mask_mode='binary'): 

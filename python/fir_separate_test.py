@@ -262,8 +262,8 @@ def plot_wiener_heatmap(params):
                                      az_range=params.az_range, el_range=params.el_range,
                                      mode='sweep')
     daoa = (aoas[1]-aoas[0])/2
-    print(aoas)
-    print(daoa)
+    # print(aoas)
+    # print(daoa)
 
     if params.plot_level >= 1:
         plt.figure(figsize=(len(aoa_plot)*7, 6))
