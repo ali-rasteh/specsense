@@ -84,7 +84,7 @@ class Params_Class(object):
             self.N_r = 8
             self.ant_dim = 1
             self.aoa_mode = 'uniform'  # uniform or sweep
-            self.n_iters = 10
+            self.n_iters = 1
             self.run_sim = True
             self.plot_wiener_heatmap = True
             self.plot_mean = True
@@ -92,10 +92,10 @@ class Params_Class(object):
             self.snr_f_id = 4
             self.N_sig_f_id = 0
             self.N_r_f_id = 0
-            self.sweep_fil_order = True
-            self.sweep_n_sig = True
-            self.sweep_snr = True
-            self.plot_level = 0
+            self.sweep_fil_order = False
+            self.sweep_n_sig = False
+            self.sweep_snr = False
+            self.plot_level = 5
             self.verbose_level = 0
 
 
