@@ -267,7 +267,7 @@ class ThresholdMasking(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, shape=(1024,), n_layers=10, n_out_channels=1):
+    def __init__(self, shape=(1024,), n_layers=10, n_out_channels=1, n_classes=1):
         super(UNet, self).__init__()
 
         self.shape = shape
@@ -310,6 +310,9 @@ class UNet(nn.Module):
         def conv_block(in_channels=1, out_channels=1, kernel_size=3):
             return nn.Sequential(
                 Conv(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, padding=1),
+                BatchNorm(out_channels),
+                nn.ReLU(inplace=True),
+                Conv(in_channels=out_channels, out_channels=out_channels, kernel_size=kernel_size, padding=1),
                 BatchNorm(out_channels),
                 nn.ReLU(inplace=True)
             )
@@ -560,6 +563,8 @@ class SS_Detection_Unet(Signal_Utils):
         self.model_load_dir = params.model_load_dir
         self.model_name = params.model_name
         self.model_seg_name = params.model_seg_name
+        self.time_format = "%H:%M:%S"
+        self.times = [datetime.datetime.now()]
 
         self.data_transform = transforms.Compose([
             transforms.ToTensor(),
@@ -579,7 +584,7 @@ class SS_Detection_Unet(Signal_Utils):
             n_out_channels = 1
 
         if self.seg_mode=='unet':
-            self.model_seg = UNet(shape=self.shape, n_layers=self.n_layers, n_out_channels=n_out_channels, n_classes=self.n_sigs_max, mode=self.problem_mode)
+            self.model_seg = UNet(shape=self.shape, n_layers=self.n_layers, n_out_channels=n_out_channels, n_classes=self.n_sigs_max)
         elif self.seg_mode=='threshold':
             self.model_seg = ThresholdMasking(shape=self.shape)
         else:
@@ -1080,8 +1085,10 @@ class SS_Detection_Unet(Signal_Utils):
                         self.print(f"Batch {batch_id + 1}/{len(self.train_loader)}, Loss: {loss.item()}, lr: {scheduler.get_last_lr()}",thr=0)
                     batch_id += 1
 
-                self.print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {scheduler.get_last_lr()}\n",thr=0)
+                self.print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {epoch_loss / len(self.train_loader)}, lr: {scheduler.get_last_lr()}",thr=0)
                 # self.test_model(mode='test')
+                self.times.append(datetime.datetime.now())
+                self.print("Time taken for the epoch: {}\n".format(self.times[-1]-self.times[-2]),thr=0)
                 
                 if ((epoch+1) % self.nepoch_save == 0 and self.nepoch_save != -1) or (epoch+1 == n_epochs):
                     if self.save_model:
@@ -1092,6 +1099,7 @@ class SS_Detection_Unet(Signal_Utils):
                     self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
 
                 scheduler.step()
+
     
 
     def test_model(self, mode='both', eval_mode=None):
@@ -1111,10 +1119,13 @@ class SS_Detection_Unet(Signal_Utils):
             else:
                 eval_mode=eval_mode
 
+            self.times.append(datetime.datetime.now())
             if mode=='both':
                 self.train_acc = self.evaluate_model(self.model, self.train_loader, mode=eval_mode)
                 self.print('Accuracy on train data: {}'.format(self.train_acc),thr=0)
             self.test_acc = self.evaluate_model(self.model, self.test_loader, mode=eval_mode)
+            self.times.append(datetime.datetime.now())
+            self.print("Time taken for the evaluation: {}".format(self.times[-1]-self.times[-2]),thr=0)
             self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
 
 

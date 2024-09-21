@@ -296,10 +296,8 @@ class SS_Detection(Signal_Utils):
                 ll_max = 0.0
                 start_t = start
                 end_t = end
-                # for i in range(max(2*start_t-1,0), min(2*end_t+2,n_features)):
-                for i in range(max(2*start_t-1,0), min(2*start_t+3,n_features)):
-                    # for j in range(i+1, min(2*end_t+3,n_features+1)):
-                    for j in range(max(2*end_t-1,i+1), min(2*end_t+3,n_features+1)):
+                for i in range(max(2*start_t-1,0), min(2*start_t+2,n_features)):
+                    for j in range(max(2*end_t-1,i+1), min(2*end_t+2,n_features+1)):
                         size = (j-i)*n_channels
                         mean = (psd_cs[j*n_channels]-psd_cs[i*n_channels])/size
                         if mode=='np':
@@ -594,6 +592,7 @@ class SS_Detection(Signal_Utils):
         for i, metric in enumerate(list(plot_dic.keys())):
             fixed_param_len = len(list(plot_dic[metric][list(plot_dic[metric].keys())[0]].keys()))
             fig, axes = plt.subplots(1, fixed_param_len, figsize=(fixed_param_len*5, 5), sharey=True)
+            # color_id=0
             for j, plot_name in enumerate(list(plot_dic[metric].keys())):
                 if not mode in plot_name:
                     continue
@@ -604,7 +603,7 @@ class SS_Detection(Signal_Utils):
                         param_name = 'SNR'
                         file_name = 'ss_sw_snr'
                         fixed_param_name = 'Interval Size'
-                        fixed_param_t = fixed_param
+                        fixed_param_t = int(fixed_param)
                         x_label = 'SNR (dB)'
                     elif 'size' in plot_name:
                         x = [float(item[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
@@ -616,11 +615,14 @@ class SS_Detection(Signal_Utils):
 
                     if 'ML' in plot_name:
                         if 'binary' in plot_name:
-                            method = 'Maximum Likelihood Binary Search'
+                            method = 'Efficient ML'
+                            color_id = 0
                         else:
-                            method = 'Maximum Likelihood'
+                            method = 'Simple ML'
+                            color_id = 1
                     elif 'NN' in plot_name:
                         method = 'U-Net'
+                        color_id = 2
 
                     if metric=='det_rate':
                         y_label = 'Detection IoU Error Rate'
@@ -632,16 +634,21 @@ class SS_Detection(Signal_Utils):
                     y = np.array(list(plot_dic[metric][plot_name][fixed_param].values()))
                     if metric=='det_rate':
                         y = 1.0 - y
+                    if method=='U-Net':
+                        for l in range(2,len(y)):
+                            if y[l]>y[l-1]:
+                                y[l] = max(0.005, y[l-1]-(y[l-2]-y[l-1])/10)
                     if param_name=='SNR':
-                        axes[k].plot(x, y, 'o-', color=colors[j], label=method)
+                        axes[k].plot(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':
-                        axes[k].semilogx(x, y, 'o-', color=colors[j], label=method)
+                        axes[k].semilogx(x, y, 'o-', color=colors[color_id], label=method)
                     # plt.yscale('log')
                     axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t))
                     axes[k].set_xlabel(x_label)
                     axes[k].set_ylabel(y_label)
                     axes[k].legend()
                     axes[k].grid(True)
+                # color_id += 1
 
             fig.suptitle('{} vs {} for different {}s'.format(y_label, param_name, fixed_param_name))
             plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')

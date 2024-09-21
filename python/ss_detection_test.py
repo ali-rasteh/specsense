@@ -16,13 +16,13 @@ class Params_Class(object):
         # self.shape=(self.n_fft, self.n_samples)
         self.shape=(self.n_fft,)
 
-        self.sig_size_min=(4,4)
+        self.sig_size_min=(1,1)
         self.sig_size_max=(256,256)
-        self.sw_fixed_size_list=[10, 20, 30, 100]
+        self.sw_fixed_size_list=[8, 16, 32, 128]
         self.sw_sig_size_min=(1,1)
         self.sw_sig_size_max=(256,256)
         self.size_sam_mode='log'        # lin or log
-        self.snr_min=1.0
+        self.snr_min=0.5
         self.snr_max=100.0
         self.sw_fixed_snr_list=[2.0, 5.0, 10.0, 50.0]
         self.sw_snr_min=0.5
@@ -36,14 +36,14 @@ class Params_Class(object):
         self.sw_n_sigs_max=1
         self.sw_n_sigs_p_dist=None
         
-        self.sweep_snr=['ml']     # nn or ml
-        self.sweep_size=['ml']    # nn or ml
+        self.sweep_snr=['ml','nn']     # nn and ml
+        self.sweep_size=['ml','nn']    # nn and ml
         self.n_simulations=100
         self.sweep_steps=20
         self.n_adj_search=1
         self.n_largest=3
 
-        self.n_dataset=10000
+        self.n_dataset=200000
         self.generate_dataset=True
         self.remove_dataset=True
         self.mask_mode='binary'        # binary or snr or channels
@@ -52,16 +52,16 @@ class Params_Class(object):
         self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
         self.train=False
-        self.test=False
+        self.test=True
         self.n_epochs_tot=50
         self.n_epochs_seg=50
         self.lr=1e-2
-        self.load_model_params=[]        # List of model parameters to load, seg and model
-        self.save_model=False
-        self.model_name='IcKI7w_weights_50.pth'
-        self.model_seg_name='IcKI7w_unet_weights_50.pth'
+        self.load_model_params=['model']        # List of model parameters to load, seg and model
+        self.save_model=True
+        self.model_name='ThjNRm_weights_50.pth'
+        self.model_seg_name='ThjNRm_weights_50.pth'
         self.problem_mode='segmentation'     # segmentation or detection
-        self.seg_mode='threshold'     # unet or threshold
+        self.seg_mode='unet'     # unet or threshold
         self.det_mode='contours'     # nn_segnet or nn_features or contours (nn_features is with feature extraction using LLRs and a NN afterward)
         self.train_mode='end2end'     # end2end or separate
         self.obj_det_loss_mode='mse'    # iou or mse
