@@ -36,8 +36,8 @@ class Params_Class(object):
         self.sw_n_sigs_max=1
         self.sw_n_sigs_p_dist=None
         
-        self.sweep_snr=['ml','nn']     # nn and ml
-        self.sweep_size=['ml','nn']    # nn and ml
+        self.sweep_snr=['ml']     # nn and ml
+        self.sweep_size=['ml']    # nn and ml
         self.n_simulations=100
         self.sweep_steps=20
         self.n_adj_search=1
@@ -52,7 +52,7 @@ class Params_Class(object):
         self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
         self.train=False
-        self.test=True
+        self.test=False
         self.n_epochs_tot=50
         self.n_epochs_seg=50
         self.lr=1e-2
@@ -75,7 +75,6 @@ class Params_Class(object):
         self.plot_level=5
 
         # Constant parameters
-        self.fs=200e6
         self.n_epochs_dethead=self.n_epochs_tot-self.n_epochs_seg
         self.draw_histogram=False
         self.mask_thr=0.0

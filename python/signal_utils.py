@@ -10,7 +10,7 @@ class Signal_Utils(General):
     def __init__(self, params):
         super().__init__(params)
         
-        self.fs=getattr(params, 'fs', None)
+        self.fs=getattr(params, 'fs', 100e6)
         self.fs_tx=getattr(params, 'fs_tx', self.fs)
         self.fs_rx=getattr(params, 'fs_rx', self.fs)
         self.n_samples=getattr(params, 'n_samples', None)

@@ -267,7 +267,7 @@ class ThresholdMasking(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, shape=(1024,), n_layers=10, n_out_channels=1, n_classes=1):
+    def __init__(self, shape=(1024,), n_layers=10, n_out_channels=1):
         super(UNet, self).__init__()
 
         self.shape = shape
@@ -584,7 +584,7 @@ class SS_Detection_Unet(Signal_Utils):
             n_out_channels = 1
 
         if self.seg_mode=='unet':
-            self.model_seg = UNet(shape=self.shape, n_layers=self.n_layers, n_out_channels=n_out_channels, n_classes=self.n_sigs_max)
+            self.model_seg = UNet(shape=self.shape, n_layers=self.n_layers, n_out_channels=n_out_channels)
         elif self.seg_mode=='threshold':
             self.model_seg = ThresholdMasking(shape=self.shape)
         else:
