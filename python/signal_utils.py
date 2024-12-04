@@ -10,15 +10,22 @@ class Signal_Utils(General):
     def __init__(self, params):
         super().__init__(params)
         
+        self.fc=getattr(params, 'fc', None)
         self.fs=getattr(params, 'fs', None)
         self.fs_tx=getattr(params, 'fs_tx', self.fs)
         self.fs_rx=getattr(params, 'fs_rx', self.fs)
+        self.fs_trx=getattr(params, 'fs_trx', min(self.fs_tx, self.fs_rx))
         self.n_samples=getattr(params, 'n_samples', None)
         self.n_samples_tx=getattr(params, 'n_samples_tx', self.n_samples)
         self.n_samples_rx=getattr(params, 'n_samples_rx', self.n_samples)
+        self.n_samples_trx=getattr(params, 'n_samples_trx', min(self.n_samples_tx, self.n_samples_rx))
+        self.sc_range_ch = getattr(params, 'sc_range_ch', [-1*self.n_samples_trx//2, self.n_samples_trx//2-1])
+        self.n_samples_ch=getattr(params, 'n_samples_ch', self.sc_range_ch[1] - self.sc_range_ch[0] + 1)
         self.nfft = getattr(params, 'nfft', 2 ** np.ceil(np.log2(self.n_samples)).astype(int))
         self.nfft_tx = getattr(params, 'nfft_tx', self.nfft)
         self.nfft_rx = getattr(params, 'nfft_rx', self.nfft)
+        self.nfft_trx = getattr(params, 'nfft_trx', min(self.nfft_tx, self.nfft_rx))
+        self.nfft_ch = getattr(params, 'nfft_ch', self.n_samples_ch)
         self.snr=getattr(params, 'snr', None)
         self.sig_noise=getattr(params, 'sig_noise', None)
         self.sig_sel_id=getattr(params, 'sig_sel_id', None)
@@ -51,12 +58,18 @@ class Signal_Utils(General):
         self.t = getattr(params, 't', np.arange(0, self.n_samples) / self.fs)
         self.t_tx = getattr(params, 't_tx', np.arange(0, self.n_samples_tx) / self.fs_tx)
         self.t_rx = getattr(params, 't_rx', np.arange(0, self.n_samples_rx) / self.fs_rx)
+        self.t_trx = getattr(params, 't_trx', np.arange(0, self.n_samples_trx) / self.fs_trx)
+        self.t_ch = getattr(params, 't_ch', np.arange(0, self.n_samples_ch) / self.fs_trx)
         self.freq = getattr(params, 'freq', np.linspace(-0.5, 0.5, self.nfft, endpoint=True) * self.fs)
         self.freq_tx = getattr(params, 'freq_tx', np.linspace(-0.5, 0.5, self.nfft_tx, endpoint=True) * self.fs_tx)
         self.freq_rx = getattr(params, 'freq_rx', np.linspace(-0.5, 0.5, self.nfft_rx, endpoint=True) * self.fs_rx)
+        self.freq_trx = getattr(params, 'freq_trx', np.linspace(-0.5, 0.5, self.nfft_trx, endpoint=True) * self.fs_trx)
+        self.freq_ch = getattr(params, 'freq_ch', self.freq_trx[(self.sc_range_ch[0]+self.nfft_trx//2):(self.sc_range_ch[1]+self.nfft_trx//2+1)])
         self.om = getattr(params, 'om', np.linspace(-np.pi, np.pi, self.nfft, endpoint=True))
         self.om_tx = getattr(params, 'om_tx', np.linspace(-np.pi, np.pi, self.nfft_tx, endpoint=True))
         self.om_rx = getattr(params, 'om_rx', np.linspace(-np.pi, np.pi, self.nfft_rx, endpoint=True))
+        self.om_trx = getattr(params, 'om_trx', np.linspace(-np.pi, np.pi, self.nfft_trx, endpoint=True))
+        self.om_ch = getattr(params, 'om_ch', self.om_trx[(self.sc_range_ch[0]+self.nfft_trx//2):(self.sc_range_ch[1]+self.nfft_trx//2+1)])
 
 
     def lin_to_db(self, x, mode='pow'):
@@ -72,6 +85,22 @@ class Signal_Utils(General):
             return 10**(x/20)
         
 
+    def aoa_to_phase(self, aoa, wl=0.01, ant_dim=1, ant_dx_m=0, ant_dy_m=0):
+        if ant_dim == 1:
+            phase = 2 * np.pi * ant_dx_m / wl * np.sin(aoa)
+        elif ant_dim == 2:
+            phase = 2 * np.pi * ant_dx_m / wl * np.sin(aoa[0]) + 2 * np.pi * ant_dy_m / wl * np.sin(aoa[1])
+        return phase
+    
+
+    def phase_to_aoa(self, phase, wl=0.01, ant_dim=1, ant_dx_m=0, ant_dy_m=0):
+        if ant_dim == 1:
+            aoa = np.arcsin(phase * wl / (2 * np.pi * ant_dx_m))
+        elif ant_dim == 2:
+            aoa = np.array([np.arcsin(phase * wl / (2 * np.pi * ant_dx_m)), np.arcsin(phase * wl / (2 * np.pi * ant_dy_m))])
+        return aoa
+    
+    
     def sinc(self, x):
         sinc = np.sinc(x)       # sin(pi.x)/(pi.x)
         # sinc = np.sin(np.pi * x) / (np.pi * x)
@@ -131,7 +160,8 @@ class Signal_Utils(General):
     
     def l2_norm(self, x):
         return np.linalg.norm(x)
-
+    
+    
     def upsample(self, signal, up=2):
         """
         Upsample a signal by a factor of 2 by inserting zeros between the original samples.
@@ -160,6 +190,14 @@ class Signal_Utils(General):
         cros_corr = np.mean(sig_1 * np.conj(padded_sig_2))
         return cros_corr
     
+
+    def integrate_signal(self, signal, n_samples=1024):
+        n_ant = signal.shape[0]
+        signal = signal.reshape(n_ant, -1, n_samples)
+        signal = np.mean(signal, axis=1)
+
+        return signal
+
 
     def extract_delay(self, sig_1, sig_2, plot_corr=False):
         """
@@ -202,14 +240,27 @@ class Signal_Utils(General):
         # y2 = np.abs(corr[max_corr_index + 1])
         
         # frac_delay = 0.5 * (y0 - y2) / (y0 - 2*y1 + y2)
-        # # total_delay = delay_samples + frac_delay
+
+
+
+        # # Upsample the transmitted and compensated signals to estimate fractional delay
+        # us_rate = 100
+        # sig_1_us = resample(sig_1, len(sig_1) * us_rate)
+        # sig_2_us = resample(sig_2, len(sig_2) * us_rate)
+
+        # # Perform cross-correlation again on the upsampled signals
+        # frac_delay_us = self.extract_delay(sig_1_us, sig_2_us)
+
+        # # Convert the upsampled delay to a fractional delay
+        # frac_delay = frac_delay_us / us_rate
+
 
         sig_1_f = fftshift(fft(sig_1, axis=-1))
         sig_2_f = fftshift(fft(sig_2, axis=-1))
         nfft = len(sig_1_f)
 
         phi = np.angle(sig_1_f * np.conj(sig_2_f))
-        phi = phi[(sc_range[0]+nfft//2):(sc_range[1]+nfft//2)]
+        phi = phi[(sc_range[0]+nfft//2):(sc_range[1]+nfft//2+1)]
 
         # Unwrap the phase to prevent discontinuities
         phi = np.unwrap(phi)
@@ -255,7 +306,7 @@ class Signal_Utils(General):
             mse (float): Mean squared error between adjusted signals.
             err2sig_ratio (float): Ratio of MSE to mean squared value of sig_2.
         """
-        n_points = np.shape(sig_1)[0]
+        n_points = min(sig_1.shape[0], sig_2.shape[0])
         delay = int(delay)
 
         # if delay >= 0:
@@ -268,19 +319,41 @@ class Signal_Utils(General):
         sig_1_adj = np.roll(sig_1, -1*delay)
         sig_2_adj = sig_2.copy()
 
-        mse = float(np.mean(np.abs(sig_1_adj[max(-1*delay,0):n_points+min(-1*delay,0)] - sig_2_adj[max(-1*delay,0):n_points+min(-1*delay,0)]) ** 2))
+        # mse = float(np.mean(np.abs(sig_1_adj[max(-1*delay,0):n_points+min(-1*delay,0)] - sig_2_adj[max(-1*delay,0):n_points+min(-1*delay,0)]) ** 2))
+        mse = float(np.mean(np.abs(sig_1_adj[:n_points] - sig_2_adj[:n_points]) ** 2))
         err2sig_ratio = float(mse / np.mean(np.abs(sig_2) ** 2))
 
         return sig_1_adj, sig_2_adj, mse, err2sig_ratio
-    
+
 
     def adjust_frac_delay(self, sig_1, sig_2, frac_delay):
+        sig_1 = sig_1.copy()
+        sig_2 = sig_2.copy()
+        n_samples = sig_1.shape[0]
+
         sig_1_f = fftshift(fft(sig_1, axis=-1))
         sig_2_f = fftshift(fft(sig_2, axis=-1))
-        
-        omega = self.om_rx
+        omega = np.linspace(-np.pi, np.pi, n_samples)
         sig_1_f = np.exp(1j * omega * frac_delay) * sig_1_f
         sig_1_adj = ifft(ifftshift(sig_1_f), axis=-1)
+
+
+        # sig_1 = np.roll(sig_1, 1)
+        # frac_delay = 1-frac_delay
+
+        # sig_1_adj = resample(sig_1, int(n_samples * (1 + abs(frac_delay))))
+        # sig_1_adj =  sig_1_adj[:n_samples]  # Return signal with original length
+
+        # # Design FIR filter for fractional delay
+        # num_taps = 64
+        # h = firwin(num_taps, 0.5, window="hamming", scale=False)
+        # h = np.sinc(np.arange(-num_taps // 2, num_taps // 2) - frac_delay)
+        # h *= np.hamming(num_taps)  # Apply a window to the filter coefficients
+        # # Apply the filter to the signal
+        # sig_1_adj = lfilter(h, 1.0, sig_1)
+
+
+        # sig_1_adj = sig_1.copy()
         sig_2_adj = sig_2.copy()
 
         return sig_1_adj, sig_2_adj
@@ -662,14 +735,14 @@ class Signal_Utils(General):
         return tone_td
 
 
-    def generate_wideband(self, bw_mode='sc', sc_range=None, bw_range=None, wb_null_sc=10, modulation='4qam', sig_mode='wideband', gen_mode='fft'):
+    def generate_wideband(self, bw_mode='sc', sc_range=None, bw_range=None, wb_null_sc=0, modulation='4qam', sig_mode='wideband', gen_mode='fft', seed=100):
         if bw_mode=='sc':
             bw_range = [sc_range[0]*self.fs_tx/self.nfft_tx, sc_range[1]*self.fs_tx/self.nfft_tx]
         elif bw_mode=='freq':
             sc_range = [int(np.round(bw_range[0]*self.nfft_tx/self.fs_tx)), int(np.round(bw_range[1]*self.nfft_tx/self.fs_tx))]
 
+        np.random.seed(seed)
         if gen_mode == 'fft':
-            np.random.seed(self.seed)
             if modulation=='psk':
                 sym = [1, -1]
             elif modulation=='4qam':
@@ -685,25 +758,34 @@ class Signal_Utils(General):
             # Create the wideband sequence in frequency-domain
             wb_fd = np.zeros((self.nfft_tx,), dtype='complex')
             if len(sym)>0:
-                wb_fd[((self.nfft_tx >> 1) + sc_range[0]):((self.nfft_tx >> 1) + sc_range[1])] = np.random.choice(sym, len(range(sc_range[0], sc_range[1])))
+                wb_fd[((self.nfft_tx >> 1) + sc_range[0]):((self.nfft_tx >> 1) + sc_range[1] + 1)] = np.random.choice(sym, len(range(sc_range[0], sc_range[1]+1)))
             else:
-                wb_fd[((self.nfft_tx >> 1) + sc_range[0]):((self.nfft_tx >> 1) + sc_range[1])] = 1
+                wb_fd[((self.nfft_tx >> 1) + sc_range[0]):((self.nfft_tx >> 1) + sc_range[1] + 1)] = 1
             if sig_mode=='wideband_null':
-                wb_fd[((self.nfft_tx >> 1) - wb_null_sc):((self.nfft_tx >> 1) + wb_null_sc)] = 0
+                wb_fd[((self.nfft_tx >> 1) - wb_null_sc):((self.nfft_tx >> 1) + wb_null_sc + 1)] = 0
 
             wb_fd = fftshift(wb_fd, axes=0)
             # Convert the waveform to time-domain
             wb_td = ifft(wb_fd, axis=0)
 
         elif gen_mode == 'ZadoffChu':
+            # prime_nums = [1, 3, 5, 7, 11, 13, 17] #, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]
+            prime_nums = [1]
             cf = self.nfft_tx % 2
             q = 0.5
-            u = 3
-            wb_fd = np.exp(-1j * np.pi * u * np.arange(self.nfft_tx) * (np.arange(self.nfft_tx) + cf + 2*q) / self.nfft_tx)
-            # cf = 0
-            # q = 0
             # u = 3
-            # wb_fd = np.exp(2j * np.pi * u * np.arange(self.nfft_tx) * (np.arange(self.nfft_tx) + cf + 2*q) / self.nfft_tx)
+            u = np.random.choice(prime_nums)
+            print(f"u={u}")
+
+            # N = self.nfft_tx
+            N = self.sc_range[1] - self.sc_range[0] + 1
+            n = np.arange(N)
+            zc = np.exp(-1j * np.pi * u * n * (n + cf + 2*q) / N)
+            # zc = np.exp(2j * np.pi * u * n * (n + cf + 2*q) / N)
+
+            wb_fd = np.zeros((self.nfft_tx,), dtype='complex')
+            wb_fd[(self.nfft_tx >> 1) + sc_range[0]:(self.nfft_tx >> 1) + sc_range[1] + 1] = zc.copy()
+
             wb_td = ifft(wb_fd, axis=0)
 
         elif gen_mode == 'ofdm':
@@ -724,6 +806,99 @@ class Signal_Utils(General):
 
         return wb_td
     
+
+    def create_mesh_grid(self, npoints = 1000, xlim = [1,1]):
+        # Create a set of points x uniformly distributed in the area using meshgrid
+        x1 = np.linspace(0, xlim[0], npoints)
+        x2 = np.linspace(0, xlim[1], npoints)
+        X1, X2 = np.meshgrid(x1, x2)
+        X = np.zeros((npoints**2,2))
+        X[:,0] = X1.flatten()
+        X[:,1] = X2.flatten()
+
+
+    def multi_arr_corr(x, arr, r, lam):
+        """
+        Computes the correlation between the received signal and the expected signal
+        for a batch of candidate target locations at a set of arrays
+
+        Parameters
+        ----------
+        x : np.array of shape (npoints,p)
+            Location of the candidate targets 
+            where nx is the number of candidate targets and p is the 
+            dimension of the space
+        arr : np.array  of shape (m,nrx,p)
+            Array locations where arr[i,j,:] is the location
+            of element j in the measurement i where m is the number of 
+            measurements
+        r : complex np.array of size (m, nrx)
+            measured values where r[i,j] is the complex measured 
+            value in measurement i on element j
+        lam : float
+            Wavelength of the signal
+            
+        Returns
+        -------
+        rho : np.array of shape (m)
+            The real values of the summed correlation at each of the measurements
+        """
+        
+        # Compute the distances from the arrays to the target
+        # (:,m,nrx,p) * (npoints,:,:,p)
+        d = np.sqrt(np.sum((arr[None,:,:,:] - x[:,None,None,:])**2, axis=3))
+
+        # Compute the phase difference
+        dexp = np.exp(-2*np.pi*1j/lam*d)
+
+        #(npoints, m, nrx)
+        # Compute the correlation
+        # (npoints, m)
+        # (npoints)
+        rho = np.sum( np.abs(np.sum(r[None,:,:]*dexp, axis=2))**2, axis=1 )
+
+        return rho
+
+
+    def feval_torch(x, arr, r, lam):
+        """
+        Torch version of the above function.
+        Computes the correlation between the received signal and the expected signal
+        for a batch of candidate target locations
+
+        Parameters
+        ----------
+        x : torch.Tensor of shape (p)
+            Location of the candidate targets 
+            where nx is the number of candidate targets and p is the 
+            dimension of the space
+        arr : torch.Tensor of shape (m, nrx, p)
+            Array locations where arr[i, j, :] is the location
+            of element j in the measurement i where m is the number of 
+            measurements
+        r : torch.Tensor of size (m, nrx)
+            measured values where r[i, j] is the complex measured 
+            value in measurement i on element j
+        lam : float
+            Wavelength of the signal
+            
+        Returns
+        -------
+        rho : scalar
+            The real values of the summed correlation at each of the measurements
+        """
+
+        # Compute the distances from the arrays to the target
+        d = torch.sqrt(torch.sum((arr[:, :, :] - x[None, None, :]) ** 2, dim=2))
+
+        # Compute the phase difference
+        dexp = torch.exp(-2 * np.pi * 1j / lam * d)
+
+        # Compute the correlation
+        rho = torch.sum(torch.abs(torch.sum(r * dexp, dim=1)) ** 2, dim=0)
+
+        return rho
+
 
     def beam_form(self, sigs):
         sigs_bf = sigs.copy()
@@ -753,7 +928,7 @@ class Signal_Utils(General):
         # sig_fil[np.abs(sig_fil) < mag_thr] = 0
 
         return sig_fil
-    
+
 
     def filter(self, sig, center_freq=0, cutoff=50e6, fil_order=1000, plot=False):
         self.print("Starting to filter the signal...", thr=2)
@@ -781,18 +956,19 @@ class Signal_Utils(General):
         sig_shift = np.exp(2 * np.pi * 1j * shift * t) * sig
 
         return sig_shift
-    
 
+    
     def estimate_cfo(self, txtd, rxtd, mode='fine', sc_range=[0,0]):
-        txtd = txtd.copy()
-        rxtd = rxtd.copy()
+        n_samples = min(txtd.shape[1], rxtd.shape[1])
+        txtd = txtd.copy()[:,:n_samples]
+        rxtd = rxtd.copy()[:,:n_samples]
+
         # h_est_full = h_est_full.copy()
         txfd = fft(txtd, axis=-1)
         rxfd = fft(rxtd, axis=-1)
 
         n_rx_ant = rxtd.shape[0]
         n_tx_ant = txtd.shape[0]
-        n_samples = min(txtd.shape[1], rxtd.shape[1])
 
         cfo_est = np.zeros((n_rx_ant))
 
@@ -814,7 +990,7 @@ class Signal_Utils(General):
 
                     # phi = np.angle(rxtd[rx_ant_id] * np.conj(txtd[tx_ant_id]))
                     phi = np.angle(rxfd[rx_ant_id] * np.conj(txfd[tx_ant_id]))
-                    phi = phi[(sc_range[0]+n_samples//2):(sc_range[1]+n_samples//2)]
+                    phi = phi[(sc_range[0]+n_samples//2):(sc_range[1]+n_samples//2+1)]
 
                     # Unwrap the phase to prevent discontinuities
                     phi = np.unwrap(phi)
@@ -849,54 +1025,261 @@ class Signal_Utils(General):
         return rxtd
     
 
-    def sync_time(self, rxtd, txtd, sc_range=[0,0]):
-        rxtd = rxtd.copy()
-        txtd = txtd.copy()
-        n_samples = min(txtd.shape[1], rxtd.shape[1])
+    def sync_time(self, rxtd, txtd, sc_range=[0,0], rx_same_delay=False, sync_frac=False):
+        n_samples_rx = rxtd.shape[-1]
+        n_samples = min(txtd.shape[-1], rxtd.shape[-1])
+        txtd_ = txtd.copy()[:,:n_samples]
+        rxtd_ = rxtd.copy()[:,:n_samples]
         n_rx_ant = rxtd.shape[0]
         n_tx_ant = txtd.shape[0]
+        rxtd_sync = np.zeros((n_rx_ant, n_tx_ant, n_samples_rx), dtype='complex')
 
-        for rx_ant_id in range(n_rx_ant):
-            delay = self.extract_delay(rxtd[rx_ant_id], txtd[0])
-            rxtd[rx_ant_id], _, _, _ = self.time_adjust(rxtd[rx_ant_id], txtd[0], delay)
-
-            frac_delay = self.extract_frac_delay(rxtd[rx_ant_id], txtd[0], sc_range=sc_range)
-            rxtd[rx_ant_id], _ = self.adjust_frac_delay(rxtd[rx_ant_id], txtd[0], frac_delay)
-
-        return rxtd
-
-
-    def channel_estimate(self, txtd, rxtd):
-        n_tx_ant = txtd.shape[0]
-        n_rx_ant = rxtd.shape[0]
-        n_samples = min(txtd.shape[1], rxtd.shape[1])
-        txtd=txtd.copy()[:,:n_samples]
-        rxtd=rxtd.copy()[:,:n_samples]
-
-        t = self.t_rx if self.n_samples_rx<self.n_samples_tx else self.t_tx
-        freq = self.freq_rx if self.nfft_rx<self.nfft_tx else self.freq_tx
-
-        H_est_full = np.zeros((n_rx_ant, n_tx_ant, n_samples), dtype='complex')
-        h_est_full = np.zeros((n_rx_ant, n_tx_ant, n_samples), dtype='complex')
-        
-        txfd = np.array([fft(txtd[ant_id, :]) for ant_id in range(n_tx_ant)])
-        rxfd = np.array([fft(rxtd[ant_id, :]) for ant_id in range(n_rx_ant)])
-        # rxfd = np.roll(rxfd, 1, axis=1)
-        # txfd = np.roll(txfd, 1, axis=1)
-
-        tol = 1e-8
         for tx_ant_id in range(n_tx_ant):
             for rx_ant_id in range(n_rx_ant):
-                txmean = np.mean(np.abs(txfd[tx_ant_id])**2)
-                H_est_full_ = rxfd[rx_ant_id] * np.conj(txfd[tx_ant_id]) / ((np.abs(txfd[tx_ant_id])**2) + tol*txmean)
-                # H_est_full_ = rxfd[rx_ant_id] * np.conj(txfd[tx_ant_id])
-                # H_est_full_ = rxfd[rx_ant_id] / txfd[tx_ant_id]
+                if rx_same_delay:
+                    rx_id = 0
+                else:
+                    rx_id = rx_ant_id
+                delay = self.extract_delay(rxtd_[rx_id], txtd_[tx_ant_id])
+                rxtd_sync[rx_ant_id,tx_ant_id], _, _, _ = self.time_adjust(rxtd[rx_ant_id], txtd_[tx_ant_id], delay)
+
+                if sync_frac:
+                    frac_delay = self.extract_frac_delay(rxtd_sync[rx_ant_id,tx_ant_id,:n_samples], txtd_[tx_ant_id], sc_range=sc_range)
+                    # print(f"Fractional delay: {frac_delay}")
+                    rxtd_sync[rx_ant_id,tx_ant_id], _ = self.adjust_frac_delay(rxtd_sync[rx_ant_id,tx_ant_id], txtd_[tx_ant_id], frac_delay)
+
+        return rxtd_sync
+
+
+    def sparse_est(self, h, g=None, sc_range_ch=[0,0], npaths=[1,1], nframe_avg=1, ndly=10000, drange=[-6,20], cv=False, n_ignore=-1):
+        """
+        Estimates the sparse channel using Orthogonal Matching Pursuit (OMP).
+        Parameters:
+        -----------
+        h : np.array of shape (nfft, nrx, ntx, nframe)
+            The time-domain channel estimate.
+        g : np.array of shape (nfft, nrx, ntx)
+            The system response in the time-domain.
+        npaths : list of ints, optional
+            Maximum number of paths to estimate in each round. Default is [1,1].
+        nframe_avg : int, optional
+            Number of frames to average for channel estimation. Default is 1.
+        ndly : int, optional
+            Number of delay points to test around the peak. Default is 10000.
+        drange : list, optional
+            Range of sample delays to test around the peak. Default is [-6, 20].
+        cv : bool, optional
+            Whether to use cross-validation to stop the path estimation. Default is True.
+        Raises:
+        -------
+        ValueError
+            If there are not enough frames for cross-validation or averaging.
+        Notes:
+        ------
+        - The method uses cross-validation to stop the path estimation when the test error exceeds the training error by a certain tolerance.
+        - The delays are set to test around the peak of the time-domain channel estimate.
+        - The method uses Orthogonal Matching Pursuit (OMP) to find the sparse solution.        
+        """
+
+        # Number of paths stops when test error exceeds training error
+        # by 1+cv_tol
+        cv_tol = 0.1
+
+        # Compute the channel estimates for training and test
+        # by averaging over the different frames
+
+        H = fft(h, axis=0)
+        nframe = H.shape[3]
+        nfft = H.shape[0]
+        n_rx_ant = H.shape[1]
+        n_tx_ant = H.shape[2]
+        if g is None:
+            G = np.ones((H.shape[0], H.shape[1], H.shape[2]), dtype='complex')
+            g = ifft(G, axis=0)
+            nff_g = nfft
+        else:
+            G = fft(g, axis=0)
+            nff_g = G.shape[0]
+        G = ifftshift(fftshift(G, axes=0)[(sc_range_ch[0]+nff_g//2):(sc_range_ch[1]+nff_g//2+1)], axes=0)
+
+        h_tr_mat = [[None for i in range(n_tx_ant)] for j in range(n_rx_ant)]
+        dly_est_mat = [[None for i in range(n_tx_ant)] for j in range(n_rx_ant)]
+        peaks_mat = [[None for i in range(n_tx_ant)] for j in range(n_rx_ant)]
+        npaths_est_mat = [[None for i in range(n_tx_ant)] for j in range(n_rx_ant)]
+
+        for irx in range(n_rx_ant):
+            for itx in range(n_tx_ant):
+                if cv:
+                    if (nframe < 2*nframe_avg):
+                        raise ValueError('Not enough frames for cross-validation')
+                    Itr = np.arange(0,nframe_avg)*2
+                    Its = Itr + 1
+                    H_tr = np.mean(H[:,irx,itx,Itr], axis=1)
+                    H_ts = np.mean(H[:,irx,itx,Its], axis=1)
+
+                    # For the FA probability, we set the threhold to the energy
+                    # of the max on nfft random basis functions.  The energy
+                    # on each basis function is exponential with mean 1/nfft.
+                    # So, the maximum energy is exponential with mean 1/nfft* (\sum_k 1/k)
+                    t = np.arange(1, nfft)
+                    cv_dec = (1 - 2*np.sum(1/t)/nfft)
+                else:
+                    if (nframe < nframe_avg):
+                        raise ValueError('Not enough frames for averaging')
+                    H_tr = H[:,irx,itx,:nframe_avg]
+                    H_tr = np.mean(H_tr, axis=1)
+                h_tr = np.fft.ifft(H_tr, axis=0)
+
+                # Set the delays to test around the peak
+                idx = np.argmax(np.abs(h_tr))
+
+                dly_test = (idx + np.linspace(drange[0], drange[1],ndly))/self.fs_trx
+                # Create the basis vectors
+                freq = (np.arange(nfft)/nfft)*self.fs_trx + self.fc - self.fs_trx/2
+                B = G[:,irx,itx,None]*np.exp(-2*np.pi*1j*freq[:,None] * dly_test[None,:])
+
+                # Use OMP to find the sparse solution
+                coeff_est = np.zeros(npaths[0])
+                
+                resid = H_tr.copy()
+                indices = []
+                indices1 = []
+                mse_tr = np.zeros(npaths[0])
+                mse_ts = np.zeros(npaths[0])
+
+                npaths_est = 0
+                for i in range(npaths[0]):
+                    
+                    # Compute the correlation
+                    cor = np.abs(B.conj().T.dot(resid))
+
+                    # Add the highest correlation to the list
+                    idx = np.argmax(cor)
+                    indices1.append(idx)
+
+                    # Use least squares to estimate the coefficients
+                    coeffs_est = np.linalg.lstsq(B[:,indices1], H_tr, rcond=None)[0]
+
+                    # Compute the resulting sparse channel
+                    H_sparse = B[:,indices1].dot(coeffs_est)
+
+                    # Compute the current residual 
+                    resid = H_tr - H_sparse
+                    
+                    # Compute the MSE on the training data
+                    mse_tr[i] = np.mean(np.abs(resid)**2)/np.mean(np.abs(H_tr)**2)
+
+                    # Compute the MSE on the test data if CV is used
+                    if cv:
+                        resid_ts = H_ts - H_sparse
+                        mse_ts[i] = np.mean(np.abs(resid_ts)**2)/np.mean(np.abs(H_ts)**2)
+
+                        # Check if path is valid
+                        if (i > 0):
+                            if (mse_ts[i] > cv_dec*mse_ts[i-1]):
+                                break
+                        if (mse_ts[i] > (1+cv_tol)*mse_tr[i]):
+                            break
+
+                    # Updated the number of paths
+                    npaths_est = i+1
+                    indices.append(idx)
+
+                # Ignore the paths that are too close to the first path
+                n_ignore_ = n_ignore * (ndly//(drange[1]-drange[0]))
+                indices1 = indices.copy()
+                for index in indices1[1:]:
+                    if index <= indices[0]+n_ignore_ and index >= indices[0]-n_ignore_:
+                        indices.remove(index)
+                indices = indices[:npaths[1]]
+                npaths_est = len(indices)
+
+                dly_est = dly_test[indices]
+                dly_est = np.pad(dly_est, (0, npaths[1] - npaths_est), constant_values=0)
+
+                # Use least squares to estimate the coefficients
+                coeffs_est = np.linalg.lstsq(B[:,indices], H_tr, rcond=None)[0]
+
+                # Compute the resulting sparse channel
+                H_sparse = B[:,indices].dot(coeffs_est)
+                h_sparse = np.fft.ifft(H_sparse, axis=0)
+
+                scale = np.mean(np.abs(G))**2
+                # peaks  = np.abs(coeffs_est)**2 * scale
+                peaks  = coeffs_est.copy() * np.sqrt(scale)
+                peaks = np.pad(peaks, (0, npaths[1] - npaths_est), constant_values=0)
+
+                h_tr_mat[irx][itx] = h_tr.copy()
+                if len(dly_est) == npaths[1]:
+                    dly_est_mat[irx][itx] = dly_est.copy()
+                else:
+                    # dly_est_mat[irx][itx] = dly_est.copy().extend([0]*(npaths-npaths_est))
+                    dly_est_mat[irx][itx] = np.array([0] * npaths[1])
+                if len(peaks) == npaths[1]:
+                    peaks_mat[irx][itx] = peaks.copy()
+                else:
+                    # peaks_mat[irx][itx] = peaks.copy() + [0]*(npaths-npaths_est)
+                    peaks_mat[irx][itx] = np.array([0] * npaths[1])
+
+                npaths_est_mat[irx][itx] = npaths_est
+        
+        h_tr_mat = np.array(h_tr_mat)
+        dly_est_mat = np.array(dly_est_mat)
+        peaks_mat = np.array(peaks_mat)
+        npaths_est_mat = np.array(npaths_est_mat)
+
+        return (h_tr_mat, dly_est_mat, peaks_mat, npaths_est_mat)
+
+
+    def channel_estimate(self, txtd, rxtd_s, sys_response=None, sc_range_ch=[0,0], snr_est=100):
+        if len(rxtd_s.shape) == 4:
+            rxtd_s = np.mean(rxtd_s.copy(), axis=0)
+        deconv_sys_response = (sys_response is not None)
+
+        n_samples = min(txtd.shape[-1], rxtd_s.shape[-1])
+        n_samples_ch = sc_range_ch[1] - sc_range_ch[0] + 1
+        # n_samples_ch = n_samples
+
+        txtd=txtd.copy()[:,:n_samples]
+        rxtd_s=rxtd_s.copy()[:,:,:n_samples]
+        n_rx_ant = rxtd_s.shape[0]
+        n_tx_ant = txtd.shape[0]
+
+        t_ch = self.t_trx[:n_samples_ch]
+        freq_ch = self.freq_trx[(sc_range_ch[0]+n_samples//2):(sc_range_ch[1]+n_samples//2+1)]
+
+        H_est_full = np.zeros((n_rx_ant, n_tx_ant, n_samples_ch), dtype='complex')
+        h_est_full = np.zeros((n_rx_ant, n_tx_ant, n_samples_ch), dtype='complex')
+        
+        txfd = fft(txtd, axis=-1)
+        rxfd_s = fft(rxtd_s, axis=-1)
+        # rxfd_s = np.roll(rxfd_s, 1, axis=1)
+        # txfd = np.roll(txfd, 1, axis=1)
+
+        if deconv_sys_response:
+            g = sys_response.copy()[:,:n_samples]
+            G = fft(g, axis=-1)
+
+        for tx_ant_id in range(n_tx_ant):
+            for rx_ant_id in range(n_rx_ant):
+                if deconv_sys_response:
+                    txfd_ = txfd[tx_ant_id] * G[rx_ant_id, tx_ant_id]
+                else:
+                    txfd_ = txfd[tx_ant_id]
+                rxfd_ = rxfd_s[rx_ant_id, tx_ant_id]
+                rx_pow = np.mean(np.abs(rxfd_)**2)
+                noise_pow = rx_pow / snr_est
+                H_est_full_ = rxfd_s[rx_ant_id, tx_ant_id] * np.conj(txfd_) / ((np.abs(txfd_)**2) + noise_pow)
+                # H_est_full_ = rxfd[rx_ant_id] * np.conj(txfd_)
+                # H_est_full_ = rxfd[rx_ant_id] / txfd_
+
+                H_est_full_ = ifftshift(fftshift(H_est_full_)[(sc_range_ch[0]+n_samples//2):(sc_range_ch[1]+n_samples//2+1)])
 
                 h_est_full_ = ifft(H_est_full_)
                 H_est_full[rx_ant_id, tx_ant_id, :] = H_est_full_.copy()
                 h_est_full[rx_ant_id, tx_ant_id, :] = h_est_full_.copy()
 
-                im = np.argmax(h_est_full_)
+                im = np.argmax(np.abs(h_est_full_))
                 h_est_full_ = np.roll(h_est_full_, -im + len(h_est_full_)//10)
                 h_est_full_ = h_est_full_.flatten()
 
@@ -904,17 +1287,18 @@ class Signal_Utils(General):
                 title = 'Channel response in the time domain \n between TX antenna {} and RX antenna {}'.format(tx_ant_id, rx_ant_id)
                 xlabel = 'Time (s)'
                 ylabel = 'Normalized Magnitude (dB)'
-                self.plot_signal(t, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
+                self.plot_signal(t_ch, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=5)
 
                 sig = np.abs(fftshift(H_est_full_))
                 title = 'Channel response in the frequency domain \n between TX antenna {} and RX antenna {}'.format(tx_ant_id, rx_ant_id)
                 xlabel = 'Frequency (MHz)'
                 ylabel = 'Magnitude (dB)'
-                self.plot_signal(freq, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=3)
+                self.plot_signal(freq_ch, sig, scale='dB20', title=title, xlabel=xlabel, ylabel=ylabel, plot_level=5)
 
         # H_est = np.linalg.pinv(txfd.T) @ rxfd.T
         # H_est = H_est.T
-        H_est = rxfd @ np.linalg.pinv(txfd)
+        # H_est = rxfd @ np.linalg.pinv(txfd)
+        H_est = np.mean(H_est_full, axis=-1)
 
         time_pow = np.sum(np.abs(H_est_full)**2, axis=(0,1))
         idx_max  = np.argmax(time_pow)
@@ -977,56 +1361,145 @@ class Signal_Utils(General):
     #     plt.show()
 
 
-    def channel_equalize(self, txtd, rxtd, H, sc_range=[0,0]):
-        txtd = txtd.copy()
-        rxtd = rxtd.copy()
+    def channel_equalize(self, txtd, rxtd, h_full, H, sc_range=[0,0], sc_range_ch=[0,0], null_sc_range=[0,0], n_rx_ch_eq=1):
+        n_samples = min(txtd.shape[-1], rxtd.shape[-1])
+        n_samples_ch = sc_range_ch[1] - sc_range_ch[0] + 1
+        txtd=txtd.copy()[:,:n_samples]
+        rxtd=rxtd.copy()[:,:n_samples]
 
         txfd = fft(txtd, axis=-1)
         rxfd = fft(rxtd, axis=-1)
-        rxtd_eq = np.zeros_like(rxtd)
-        rxfd_eq = np.zeros_like(rxfd)
-        nfft = txfd.shape[-1]
+        H_full = fft(h_full, axis=-1)
+
+        rxtd_eq = rxtd.copy()
+        rxfd_eq = rxfd.copy()
 
         # print('H_det: {}'.format(np.abs(np.linalg.det(H))))
         
-        if np.linalg.matrix_rank(H) == min(H.shape) and np.abs(np.linalg.det(H)) > 1e-3:
-            H_inv = np.linalg.pinv(H)
-        else:
-            epsilon = 1e-6
-            H = H + epsilon * np.eye(H.shape[0])
-            H_inv = np.linalg.pinv(H)
+        # if np.linalg.matrix_rank(H) == min(H.shape) and np.abs(np.linalg.det(H)) > 1e-3:
+        #     H_inv = np.linalg.pinv(H)
+        # else:
+        #     epsilon = 1e-6
+        #     H = H + epsilon * np.eye(H.shape[0])
+        #     H_inv = np.linalg.pinv(H)
 
-        if np.abs(np.linalg.det(H)) > 1e-3:
-            rxfd_eq = H_inv @ rxfd
-            rxtd_eq = ifft(rxfd_eq, axis=-1)
-        else:
+        # if np.abs(np.linalg.det(H)) > 1e-3:
+        #     rxfd_eq = H_inv @ rxfd
+        # else:
+        #     for rx_ant_id in range(rxtd_eq.shape[0]):
+        #         phase_offset = self.calc_phase_offset(rxfd[rx_ant_id], txfd[0])
+        #         rxfd_eq[rx_ant_id], _ = self.adjust_phase(rxfd[rx_ant_id], txfd[0], phase_offset)
+
+
+        rxfd_ = fftshift(rxfd, axes=-1)
+        rxfd_eq_ = fftshift(rxfd_eq, axes=-1)
+        H_full_ = fftshift(H_full, axes=-1)
+        if n_rx_ch_eq == 1:
             for rx_ant_id in range(rxtd_eq.shape[0]):
-                phase_offset = self.calc_phase_offset(rxfd[rx_ant_id], txfd[0])
-                rxfd_eq[rx_ant_id], _ = self.adjust_phase(rxfd[rx_ant_id], txfd[0], phase_offset)
-            rxtd_eq = ifft(rxfd_eq, axis=-1)
+                # rxfd_eq[rx_ant_id] = rxfd[rx_ant_id] / H[rx_ant_id, rx_ant_id]
+
+                for i, sc in enumerate(range(sc_range[0], sc_range[1]+1)):
+                    if not sc in range(null_sc_range[0], null_sc_range[1]+1):
+                        rxfd_eq_[rx_ant_id, sc+n_samples//2] = rxfd_[rx_ant_id, sc+n_samples//2] / H_full_[rx_ant_id, rx_ant_id, i]
+                rxfd_eq[rx_ant_id] = ifftshift(rxfd_eq_[rx_ant_id])
+        else:
+            tol = 1e-6
+            for i, sc in enumerate(range(sc_range[0], sc_range[1]+1)):
+                if not sc in range(null_sc_range[0], null_sc_range[1]+1):
+                    H_sc = H_full_[:,:,i]
+                    # H_sc += tol*np.eye(H_sc.shape[0])
+                    # H_sc_inv = np.linalg.pinv(H_sc)
+                    H_sc_inv = (np.conj(H_sc.T) * H_sc + tol*np.eye(H_sc.shape[0])) * np.conj(H_sc.T)
+                    rxfd_eq_[:,sc+n_samples//2] = H_sc_inv @ rxfd_[:,sc+n_samples//2]
+
+            rxfd_eq = ifftshift(rxfd_eq_, axes=-1)
+
+        rxtd_eq = ifft(rxfd_eq, axis=-1)
 
         return rxtd_eq
+
+
+    def filter_aoa(self, rx_phase_list, rx_phase, aoa_list, aoa):
+        alpha_phase = 0.5
+        alpha_aoa = 0.5
+
+        if len(aoa_list) > 0:
+            aoa_last = aoa_list[-1]
+        else:
+            if aoa is None:
+                aoa_last = 0
+            else:
+                aoa_last = aoa
+        if aoa is None:
+            aoa = aoa_last
+        else:
+            aoa = alpha_aoa * aoa + (1 - alpha_aoa) * aoa_last
+
+
+        if len(rx_phase_list) > 0:
+            rx_phase_last = rx_phase_list[-1]
+        else:
+            if rx_phase is None:
+                rx_phase_last = 0
+            else:
+                rx_phase_last = rx_phase
+        if rx_phase is None:
+            rx_phase = rx_phase_last
+        else:
+            rx_phase = alpha_phase * rx_phase + (1 - alpha_phase) * rx_phase_last
+
+        rx_phase_list.append(rx_phase)
+        aoa_list.append(aoa)
+
+        return rx_phase_list, aoa_list
+
+
+    def angle_of_arrival(self, txtd, rxtd, h_full, rx_phase_list, aoa_list, rx_phase_offset=0):
+        if len(rxtd.shape) == 3:
+            rxtd = np.mean(rxtd.copy(), axis=0)
+        rx_phase = self.calc_phase_offset(rxtd[0,:], rxtd[1,:])
+
+        # h_full_ = h_full.copy()[:,0,:]
+        # h_full_ = np.sum(np.abs(h_full_)**2, axis=0)
+        # im = np.argmax(h_full_)
+        # # i0 = np.maximum(0, im-10)
+        # # i1 = np.minimum(self.nfft_ch, im+10)
+        # # z = np.mean(rxtd[0, i0:i1] * np.conj(rxtd[1, i0:i1]))
+        # # rx_phase = np.angle(z)
+        # rx_phase = np.angle(rxtd[0,im] * np.conj(rxtd[1,im]))
+
+        rx_phase -= rx_phase_offset
+        # print("rx_phase: ", rx_phase)
+
+        angle_sin = rx_phase/(2*np.pi*self.ant_dx)
+        if angle_sin > 1 or angle_sin < -1:
+            # angle = np.nan
+            aoa = None
+            rx_phase = None
+            self.print("AoA sin is out of range: {}".format(angle_sin), 1)
+        else:
+            aoa = np.arcsin(angle_sin)
+
+        rx_phase_list, aoa_list = self.filter_aoa(rx_phase_list, rx_phase, aoa_list, aoa)
+
+        return rx_phase_list, aoa_list
     
 
-    def estimate_mimo_params(self, H):
-        U, S, Vh = np.linalg.svd(H)
+    def estimate_mimo_params(self, txtd, rxtd, h_full, H, rx_phase_list, aoa_list):
+        # U, S, Vh = np.linalg.svd(H)
         # W_tx = Vh.conj().T
         # W_rx = U
-        if H.shape[0] == 1:
-            tx_phase = 0
-            rx_phase = 0
-        elif H.shape[0] == 2:
-            # print("H_est_max: ", np.abs(H))
-            rx_phase = np.angle(U[0,0]*np.conj(U[1,0]))
-            # print("rx_phase: {:0.4f}".format(rx_phase*180/np.pi))
-            tx_phase = np.angle(Vh[0,0]*np.conj(Vh[0,1]))
-            # print("tx_phase: {:0.4f}".format(tx_phase*180/np.pi))
+        # rx_phase = np.mean(np.angle(U[0,:]*np.conj(U[1,:])))
+        # tx_phase = np.mean(np.angle(Vh[:,0]*np.conj(Vh[:,1])))
 
-        return tx_phase, rx_phase
+        rx_phase_list, aoa_list = self.angle_of_arrival(txtd=txtd, rxtd=rxtd, h_full=h_full, rx_phase_list=rx_phase_list, aoa_list=aoa_list, rx_phase_offset=self.rx_phase_offset)
+        # print("AoA: {} deg".format(np.rad2deg(aoa)))
+
+        return rx_phase_list, aoa_list
 
 
     # plot_signal(self, x, sig, mode='time_IQ', scale='linear', title='Custom Title', xlabel='Time', ylabel='Amplitude', plot_args={'color': 'red', 'linestyle': '--'}, xlim=(0, 10), ylim=(-1, 1), legend=True)
-    def plot_signal(self, x, sigs, mode='time', scale='dB10', plot_level=0, **kwargs):
+    def plot_signal(self, x=None, sigs=None, mode='time', scale='linear', plot_level=0, **kwargs):
         if self.plot_level<plot_level:
             return
         
@@ -1041,6 +1514,9 @@ class Signal_Utils(General):
         plot_args = kwargs.get('plot_args', {})
 
         for i, sig_name in enumerate(sigs_dict.keys()):
+            if x is None:
+                x = np.arange(len(sigs_dict[sig_name]))
+
             if mode=='time' or mode=='time_IQ':
                 sig_plot = sigs_dict[sig_name].copy()
             elif mode=='fft':
@@ -1094,10 +1570,43 @@ class Signal_Utils(General):
         plt.show()
 
 
-if __name__=='__main__':
-    from fir_separate_test import Params_Class
-    params = Params_Class()
-    Signals = Signal_Utils(params)
-    Signals.plot_rect_sync()
+    def draw_half_gauge(self, ax, min_val=-90, max_val=90):
+        ax.add_patch(Wedge((0.5, 0.5), 0.4, 90, -90, color='#f0f0f0', zorder=1))
+        ax.add_patch(Wedge((0.5, 0.5), 0.35, 90, -90, color='#e0e0e0', zorder=2))
+
+        num_ticks = 18
+        for i in range(num_ticks + 1):
+            angle = i * (180 / num_ticks)
+            tick_length = 0.05 if i % 2 == 0 else 0.03
+            ax.plot([0.5 + 0.35 * np.cos(np.radians(angle)), 0.5 + (0.35 - tick_length) * np.cos(np.radians(angle))],
+                    [0.5 + 0.35 * np.sin(np.radians(angle)), 0.5 + (0.35 - tick_length) * np.sin(np.radians(angle))],
+                    color='black', lw=1, zorder=3)
+
+        for i in range(num_ticks + 1):
+            angle = i * (180 / num_ticks)
+            value = -1 * (min_val + (max_val - min_val) * (i / num_ticks))
+            x = 0.5 + 0.28 * np.cos(np.radians(angle))
+            y = 0.5 + 0.28 * np.sin(np.radians(angle))
+            ax.text(x, y, f'{int(value)}', fontsize=10, ha='center', va='center')
+
+        ax.add_patch(Circle((0.5, 0.5), 0.05, color='black', zorder=5))
+        ax.text(0.5, 0.95, "Angle of Arrival", fontsize=30, fontweight='bold', horizontalalignment='center')
+        ax.set_aspect('equal')
 
 
+    def gauge_update_needle(self, ax, value, min_val=90, max_val=-90):
+        if value != np.nan and value != None:
+            angle = (value - min_val) * 180 / (max_val - min_val)
+        else:
+            return
+        x = 0.5 + 0.35 * np.cos(np.radians(angle))
+        y = 0.5 + 0.35 * np.sin(np.radians(angle))
+
+        arrow = FancyArrow(0.5, 0.5, x-0.5, y-0.5, width=0.02, head_width=0.05, head_length=0.08, color='darkblue', zorder=6)
+
+        old_arrows = [p for p in ax.patches if isinstance(p, FancyArrow)]
+        for old_arrow in old_arrows:
+            old_arrow.remove()
+
+        ax.add_patch(arrow)
+        

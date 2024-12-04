@@ -169,6 +169,7 @@ python/other/test.py
 python/data
 python/model
 python/logs
+python/other
 python/figs
 matlab/other/
 env/

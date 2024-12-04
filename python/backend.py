@@ -18,6 +18,11 @@ be_scp = None
 if import_general:
     import importlib
     import os
+    import shutil
+    from scp import SCPClient
+    import nbformat
+    import copy
+    import requests
     import platform
     import argparse
     import time
@@ -26,6 +31,7 @@ if import_general:
     import random
     import string
     import socket
+    import paramiko
     from types import SimpleNamespace
     import itertools
     import heapq
@@ -36,8 +42,9 @@ if import_matplotlib:
     import matplotlib.pyplot as plt
     import matplotlib.animation as animation
     from matplotlib.colors import LogNorm
+    from matplotlib.patches import Wedge, Circle, FancyArrow
     # matplotlib.use('TkAgg')
-    # matplotlib.use('WebAgg')
+    matplotlib.use('WebAgg')
     # matplotlib.use('Agg')
 
 if import_numpy:
@@ -87,6 +94,7 @@ if import_scipy or import_cupyx:
     welch = be_scp_sig.welch
     upfirdn = be_scp_sig.upfirdn
     convolve = be_scp_sig.convolve
+    resample = be_scp_sig.resample
 
 if import_sklearn:
     from sklearn.linear_model import Ridge
