@@ -165,7 +165,7 @@ cython_debug/
 desktop.ini
 
 # Other files and folders
-python//arxiv/other/
+python/arxiv/other/
 python/data
 python/model
 python/logs
