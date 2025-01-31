@@ -625,11 +625,11 @@ class SS_Detection(Signal_Utils):
                         color_id = 2
 
                     if metric=='det_rate':
-                        y_label = 'Detection IoU Error Rate'
+                        y_label = 'Detection IoU Error Rate (Logarithmic)'
                     elif metric=='missed_rate':
-                        y_label = 'Missed Detection Rate'
+                        y_label = 'Missed Detection Rate (Logarithmic)'
                     elif metric=='fa_rate':
-                        y_label = 'False Alarm Rate'
+                        y_label = 'False Alarm Rate (Logarithmic)'
 
                     y = np.array(list(plot_dic[metric][plot_name][fixed_param].values()))
                     if metric=='det_rate':
@@ -639,18 +639,22 @@ class SS_Detection(Signal_Utils):
                             if y[l]>y[l-1]:
                                 y[l] = max(0.005, y[l-1]-(y[l-2]-y[l-1])/10)
                     if param_name=='SNR':
-                        axes[k].plot(x, y, 'o-', color=colors[color_id], label=method)
+                        axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':
-                        axes[k].semilogx(x, y, 'o-', color=colors[color_id], label=method)
+                        axes[k].loglog(x, y, 'o-', color=colors[color_id], label=method)
+                        # plt.xscale('log')
                     # plt.yscale('log')
-                    axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t))
-                    axes[k].set_xlabel(x_label)
-                    axes[k].set_ylabel(y_label)
-                    axes[k].legend()
+                    axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t), fontsize=15, fontweight='bold')
+                    axes[k].set_xlabel(x_label, fontsize=15)
+                    axes[k].set_ylabel(y_label, fontsize=12)
+                    axes[k].legend(fontsize=12)
+                    axes[k].tick_params(axis='both', which='major', labelsize=12)
                     axes[k].grid(True)
                 # color_id += 1
 
-            fig.suptitle('{} vs {} for different {}s'.format(y_label, param_name, fixed_param_name))
+            fig.suptitle('{} vs {} for different {}s'.format(y_label, param_name, fixed_param_name), fontsize=20)
+            # fig.tight_layout(rect=[0, 0, 1, 0.95])
+            fig.tight_layout()
             plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')
             plt.show()
 
