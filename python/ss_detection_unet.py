@@ -889,15 +889,30 @@ class SS_Detection_Unet(Signal_Utils):
 
     def intersection_over_union(self, pred, target, mode='segmentation'):
         if mode=='segmentation' or mode=='detection_seg':
+            dim_nb = tuple(range(1,len(pred.shape)))
+
             pred_c = pred > self.mask_thr
             target_c = target > self.gt_mask_thr
             # target_c = target
+            target_sum = target_c.float().sum(dim=dim_nb)
+            pred_sum = pred_c.float().sum(dim=dim_nb)
+            target_sum = target_sum > 0
+            pred_sum = pred_sum > 0
             
-            intersection = (pred_c & target_c).float().sum()
-            union = (pred_c | target_c).float().sum()
-            
-            iou = (intersection + self.eval_smooth) / (union + self.eval_smooth)
-            iou = iou.mean().item()
+            intersection = (pred_c & target_c).float().sum(dim=dim_nb)
+            union = (pred_c | target_c).float().sum(dim=dim_nb)
+            det_rate = (intersection + self.eval_smooth) / (union + self.eval_smooth)
+            indices = target_sum & pred_sum
+            det_rate = det_rate[indices].mean().item()
+            det_rate_n = indices.float().sum().item()
+
+            # Compute missed detection rate
+            missed = (target_sum & ~pred_sum).float().sum() / target_sum.float().sum()
+            missed_n = target_sum.float().sum().item()
+
+            # Compute false alarm rate
+            false_alarm = (~target_sum & pred_sum).float().sum() / (~target_sum).float().sum()
+            false_alarm_n = (~target_sum).float().sum().item()
 
         elif 'detection' in mode:
             (pred_bbox, pred_objectness, pred_classes) = pred
@@ -940,11 +955,17 @@ class SS_Detection_Unet(Signal_Utils):
             union = torch.clamp(union, min=0, max=max(self.shape))
             union = torch.prod(union, dim=-1)
 
-            iou = ((intersection+self.eval_smooth)/(union+self.eval_smooth))
-            iou = iou.mean().item()
+            det_rate = ((intersection+self.eval_smooth)/(union+self.eval_smooth))
+            det_rate = det_rate.mean().item()
+            det_rate_n = batch_size
             # raise InterruptedError("Interrupted manually.")
 
-        return iou
+            missed = 0.0
+            missed_n = 0
+            false_alarm = 0.0
+            false_alarm_n = 0
+
+        return ((det_rate,det_rate_n), (missed,missed_n), (false_alarm,false_alarm_n))
 
 
     def dice_coefficient(self, pred, target):
@@ -959,8 +980,15 @@ class SS_Detection_Unet(Signal_Utils):
 
     def evaluate_model(self, model, data_loader, mode='segmentation'):
         model.eval()
-        score = 0
+
+        det_rate = 0
+        missed = 0
+        false_alarm = 0
+        det_rate_n = 0
+        missed_n = 0
+        false_alarm_n = 0
         mask_energy = 0
+
         self.print("Dataloader length: {}".format(len(data_loader)),thr=0)
         with torch.no_grad():
             for data, gt in data_loader:
@@ -980,13 +1008,25 @@ class SS_Detection_Unet(Signal_Utils):
                     output = (output>self.mask_thr).float()
                     output = self.extract_bbox_efficient(output, min_area=self.contours_min_area, max_gap=self.contours_max_gap)
                 if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')):
-                    score += self.intersection_over_union(output, gt, mode=mode)
+                    (det_rate_b, missed_b, false_alarm_b) = self.intersection_over_union(output, gt, mode=mode)
+                    det_rate += (det_rate_b[0]*det_rate_b[1])
+                    det_rate_n += det_rate_b[1]
+                    missed += (missed_b[0]*missed_b[1])
+                    missed_n += missed_b[1]
+                    false_alarm += (false_alarm_b[0]*false_alarm_b[1])
+                    false_alarm_n += false_alarm_b[1]
                 elif mode=='segmentation' and self.mask_mode=='snr':
-                    score += F.mse_loss(output, gt).item()
-                    # score += ((gt.cpu().numpy()-output.cpu().numpy())**2).mean()
+                    det_rate += F.mse_loss(output, gt).item()
+                    # det_rate += ((gt.cpu().numpy()-output.cpu().numpy())**2).mean()
                     mask_energy += torch.mean(gt**2).item()
                 elif 'detection' in mode:
-                    score += self.intersection_over_union(output, gt, mode=mode)
+                    (det_rate_b, missed_b, false_alarm_b) = self.intersection_over_union(output, gt, mode=mode)
+                    det_rate += (det_rate_b[0]*det_rate_b[1])
+                    det_rate_n += det_rate_b[1]
+                    missed += (missed_b[0]*missed_b[1])
+                    missed_n += missed_b[1]
+                    false_alarm += (false_alarm_b[0]*false_alarm_b[1])
+                    false_alarm_n += false_alarm_b[1]
                 if self.draw_histogram:
                     plt.figure(figsize=(10, 6))
                     output_h=output.clone()
@@ -1002,13 +1042,30 @@ class SS_Detection_Unet(Signal_Utils):
                     plt.show()
                     raise InterruptedError("Interrupted manually after plot.")
         if len(data_loader)==0:
-            return 0.0
-        score /= len(data_loader)
-        mask_energy /= len(data_loader)
-        if self.mask_mode=='snr':
-            score = score/mask_energy
+            return (0.0, 0.0, 0.0)
 
-        return score
+        # det_rate /= len(data_loader)
+        # missed /= len(data_loader)
+        # false_alarm /= len(data_loader)
+        if det_rate_n==0:
+            det_rate = 0.0
+        else:
+            det_rate /= det_rate_n
+        if missed_n==0:
+            missed = 0.0
+        else:
+            missed /= missed_n
+        if false_alarm_n==0:
+            false_alarm = 0.0
+        else:
+            false_alarm /= false_alarm_n
+        
+        mask_energy /= len(data_loader)
+
+        if self.mask_mode=='snr':
+            det_rate /= mask_energy
+
+        return (det_rate, missed, false_alarm)
 
 
     def train_model(self):
@@ -1095,7 +1152,11 @@ class SS_Detection_Unet(Signal_Utils):
                         torch.save(model.state_dict(), self.model_save_dir+self.random_str+name+'_weights_{}.pth'.format(epoch + 1))
                         torch.save(model, self.model_save_dir+self.random_str+name+'_model_{}.pth'.format(epoch + 1))
                         self.print("Saved the Neural Network's model",thr=0)
-                    self.test_acc = self.evaluate_model(model, self.test_loader, mode=mode)
+                    (det_rate, missed, false_alarm) = self.evaluate_model(model, self.test_loader, mode=mode)
+                    self.test_acc = det_rate
+                    self.test_det_rate = det_rate
+                    self.test_missed_rate = missed
+                    self.test_fa_rate = false_alarm
                     self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
 
                 scheduler.step()
@@ -1120,13 +1181,23 @@ class SS_Detection_Unet(Signal_Utils):
                 eval_mode=eval_mode
 
             self.times.append(datetime.datetime.now())
-            if mode=='both':
-                self.train_acc = self.evaluate_model(self.model, self.train_loader, mode=eval_mode)
+            if mode=='both' or mode=='train':
+                (det_rate, missed, false_alarm) = self.evaluate_model(self.model, self.train_loader, mode=eval_mode)
+                self.train_acc = det_rate
+                self.train_det_rate = det_rate
+                self.train_missed_rate = missed
+                self.train_fa_rate = false_alarm
                 self.print('Accuracy on train data: {}'.format(self.train_acc),thr=0)
-            self.test_acc = self.evaluate_model(self.model, self.test_loader, mode=eval_mode)
-            self.times.append(datetime.datetime.now())
+            if mode=='both' or mode=='test':
+                (det_rate, missed, false_alarm) = self.evaluate_model(self.model, self.test_loader, mode=eval_mode)
+                self.test_acc = det_rate
+                self.test_det_rate = det_rate
+                self.test_missed_rate = missed
+                self.test_fa_rate = false_alarm
+                self.times.append(datetime.datetime.now())
+                self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
+
             self.print("Time taken for the evaluation: {}".format(self.times[-1]-self.times[-2]),thr=0)
-            self.print('Accuracy on test data: {}\n'.format(self.test_acc),thr=0)
 
 
 

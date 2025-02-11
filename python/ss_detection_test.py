@@ -11,16 +11,21 @@ import_torch=True
 class Params_Class(object):
     def __init__(self):
         
-        self.n_fft=1024
+        # self.n_fft=1024
+        self.n_fft=128
         self.n_samples=128
-        # self.shape=(self.n_fft, self.n_samples)
-        self.shape=(self.n_fft,)
+
+        # self.shape=(self.n_fft,)
+        self.shape=(self.n_fft, self.n_samples)
 
         self.sig_size_min=(1,1)
-        self.sig_size_max=(256,256)
-        self.sw_fixed_size_list=[8, 16, 32, 128]
+        # self.sig_size_max=(256,256)
+        self.sig_size_max=(80,80)
+        # self.sw_fixed_size_list=[8, 16, 32, 128]
+        self.sw_fixed_size_list=[4, 8, 16, 32]
         self.sw_sig_size_min=(1,1)
-        self.sw_sig_size_max=(256,256)
+        # self.sw_sig_size_max=(256,256)
+        self.sw_sig_size_max=(64,64)
         self.size_sam_mode='log'        # lin or log
         self.snr_min=0.5
         self.snr_max=100.0
@@ -37,14 +42,16 @@ class Params_Class(object):
         self.sw_n_sigs_p_dist=None
         # self.sw_n_sigs_p_dist=[0.1,0.9]
         
-        self.sweep_snr=['ml']     # nn and ml
-        self.sweep_size=['ml']    # nn and ml
+        self.sweep_snr=['ml', 'nn']     # nn and ml
+        self.sweep_size=['ml', 'nn']    # nn and ml
+        # self.n_simulations=100
         self.n_simulations=100
         self.sweep_steps=20
         self.n_adj_search=1
         self.n_largest=3
 
-        self.n_dataset=200000
+        # self.n_dataset=200000
+        self.n_dataset=100000
         self.generate_dataset=True
         self.remove_dataset=True
         self.mask_mode='binary'        # binary or snr or channels
@@ -58,9 +65,11 @@ class Params_Class(object):
         self.n_epochs_seg=50
         self.lr=1e-2
         self.load_model_params=['model']        # List of model parameters to load, seg and model
-        self.save_model=True
-        self.model_name='ThjNRm_weights_50.pth'
-        self.model_seg_name='ThjNRm_weights_50.pth'
+        self.save_model=False
+        # self.model_name='ThjNRm_weights_50.pth'
+        self.model_name='mJSEsr_weights_50.pth'
+        # self.model_seg_name='ThjNRm_weights_50.pth'
+        self.model_seg_name='mJSEsr_weights_50.pth'
         self.problem_mode='segmentation'     # segmentation or detection
         self.seg_mode='unet'     # unet or threshold
         self.det_mode='contours'     # nn_segnet or nn_features or contours (nn_features is with feature extraction using LLRs and a NN afterward)
@@ -99,7 +108,7 @@ class Params_Class(object):
         self.nbatch_log=400
         self.hist_thr=10.0
         self.hist_bins=40
-        self.test_n_dataset=10000
+        self.test_n_dataset=self.n_dataset//20
         self.random_str=None
         self.use_cupy=False
         self.use_torch=True
@@ -111,8 +120,12 @@ class Params_Class(object):
         self.data_dir='./data/'
         self.dataset_name='psd_dataset.npz'
 
+        self.initialize()
 
 
+
+
+    def initialize(self):
 
         self.snr_range = np.array([self.snr_min, self.snr_max]).astype(float)
         
@@ -138,15 +151,33 @@ class Params_Class(object):
 
 
 
+
+    def copy(self):
+        return copy.deepcopy(self)
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
 
     params = Params_Class()
     ss_det = SS_Detection(params)
     params.random_str = ss_det.gen_random_str()
     ss_det.print_info(params)
-    ss_det.plot_MD_vs_SNR()
+    ss_det.plot_MD_vs_SNR(mode=1)
+    ss_det.plot_MD_vs_SNR(mode=2)
+    ss_det.plot_MD_vs_SNR(mode=3)
+    ss_det.plot_MD_vs_SNR(mode=4)
     ss_det.plot_MD_vs_DoF(mode=1)
     ss_det.plot_MD_vs_DoF(mode=2)
+    ss_det.plot_MD_vs_DoF(mode=3)
+    ss_det.plot_MD_vs_DoF(mode=4)
+    # raise SystemExit
+
     if params.generate_dataset:
         if params.train:
             ss_det.generate_psd_dataset(dataset_path=params.data_dir+params.dataset_name, n_dataset=params.n_dataset, shape=params.shape, n_sigs_min=params.n_sigs_min, n_sigs_max=params.n_sigs_max, n_sigs_p_dist=params.n_sigs_p_dist, sig_size_min=params.sig_size_min, sig_size_max=params.sig_size_max, snr_range=params.snr_range, mask_mode=params.mask_mode)
@@ -161,7 +192,7 @@ if __name__ == '__main__':
         ss_det_unet.load_model()
         ss_det_unet.load_optimizer()
         ss_det_unet.train_model()
-        ss_det_unet.test_model()
+        ss_det_unet.test_model(mode='both')
 
     if params.remove_dataset and os.path.exists(params.data_dir+params.dataset_name):
         os.remove(params.data_dir+params.dataset_name)
@@ -169,9 +200,12 @@ if __name__ == '__main__':
 
     metrics = {"det_rate": {}, "missed_rate": {}, "fa_rate": {}}
     if 'nn' in params.sweep_snr and params.test:
-        det_rate = {}
+        # det_rate = {}
+        for metric in metrics:
+            metrics[metric]['snr_NN'] = {}
         for size in params.sw_fixed_size_list:
-            det_rate[size] = {}
+            for metric in metrics:
+                metrics[metric]['snr_NN'][size] = {}
             fixed_size = tuple([size for _ in range(len(params.shape))])
             for snr in params.sw_snrs:
                 dataset_path=params.data_dir+'psd_dataset_snr-{:0.2f}'.format(snr)+'.npz'
@@ -182,17 +216,24 @@ if __name__ == '__main__':
                 ss_det_unet.test_ratio=0.99
                 ss_det_unet.val_ratio=0.0
                 ss_det_unet.generate_data_loaders()
-                ss_det_unet.test_model()
-                det_rate[size][snr] = ss_det_unet.test_acc
+                ss_det_unet.test_model(mode='test')
+                # det_rate[size][snr] = ss_det_unet.test_acc
+                metrics['det_rate']['snr_NN'][size][snr] = ss_det_unet.test_det_rate
+                metrics['missed_rate']['snr_NN'][size][snr] = ss_det_unet.test_missed_rate
+                metrics['fa_rate']['snr_NN'][size][snr] = ss_det_unet.test_fa_rate
                 if params.remove_dataset and os.path.exists(dataset_path):
                     os.remove(dataset_path)
-        ss_det.print("NN detection rate for SNRs: {}\n".format(det_rate),thr=0)
-        metrics['det_rate']['snr_NN'] = det_rate.copy()
+        ss_det.print("NN detection rate for SNRs: {}\n".format({key:metrics[key]['snr_NN'] for key in list(metrics.keys())}), thr=0)
+        # metrics['det_rate']['snr_NN'] = det_rate.copy()
 
     if 'nn' in params.sweep_size and params.test:
-        det_rate = {}
+        # det_rate = {}
+        for metric in metrics:
+            metrics[metric]['size_NN'] = {}
         for snr in params.sw_fixed_snr_list:
-            det_rate[snr] = {}
+            # det_rate[snr] = {}
+            for metric in metrics:
+                metrics[metric]['size_NN'][snr] = {}
             fixed_snr_range = np.array([snr, snr]).astype(float)
             for size in params.sw_sizes:
                 dataset_path=params.data_dir+'psd_dataset_size-{}'.format(str(size).replace(" ", ""))+'.npz'
@@ -203,12 +244,15 @@ if __name__ == '__main__':
                 ss_det_unet.test_ratio=0.99
                 ss_det_unet.val_ratio=0.0
                 ss_det_unet.generate_data_loaders()
-                ss_det_unet.test_model()
-                det_rate[snr][size] = ss_det_unet.test_acc
+                ss_det_unet.test_model(mode='test')
+                # det_rate[snr][size] = ss_det_unet.test_acc
+                metrics['det_rate']['size_NN'][snr][size] = ss_det_unet.test_det_rate
+                metrics['missed_rate']['size_NN'][snr][size] = ss_det_unet.test_missed_rate
+                metrics['fa_rate']['size_NN'][snr][size] = ss_det_unet.test_fa_rate
                 if params.remove_dataset and os.path.exists(dataset_path):
                     os.remove(dataset_path)
-        ss_det.print("NN detection rate for signal sizes: {}\n".format(det_rate),thr=0)
-        metrics['det_rate']['size_NN'] = det_rate.copy()
+        ss_det.print("NN detection rate for signal sizes: {}\n".format({key:metrics[key]['size_NN'] for key in list(metrics.keys())}), thr=0)
+        # metrics['det_rate']['size_NN'] = det_rate.copy()
 
     if 'ml' in params.sweep_snr or 'ml' in params.sweep_size:
         params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)

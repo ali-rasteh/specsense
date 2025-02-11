@@ -22,27 +22,42 @@ class SS_Detection(Signal_Utils):
         self.print("Initialized Spectrum Sensing class instance.",thr=0)
 
 
-    def plot_MD_vs_SNR(self, snr_min=0.1, snr_max=100.0, n_points=1000, N_min=1, N_max=1024, n_N=11, p_fa=1e-6):
+    def plot_MD_vs_SNR(self, snr_min=0.1, snr_max=100.0, n_points=1000, N_min=1, N_max=1024, n_N=11, p_fa=1e-6, mode=1):
 
         snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_points)
         dofs = 2 * np.logspace(np.log10(N_min), np.log10(N_max), n_N).round().astype(int)
         # dofs = 2 * np.linspace(N_min, N_max, n_N).round().astype(int)
-        seen = set()
-        dofs = [x for x in dofs if not (x in seen or seen.add(x))]
-        dofs = np.array(dofs)
+        dofs = np.unique(dofs)
 
         if self.plot_level>=0:
             plt.figure(figsize=(8, 6))
             for dof in dofs:
                 x = chi2.ppf(1-p_fa, dof)
                 p_md = chi2.cdf(x/(1+snrs), dof)
-                plt.plot(self.lin_to_db(snrs), p_md, label=f'DoF={dof}')
+                if mode==1:
+                    plt.plot(snrs, p_md, label=f'DoF={dof}')
+                elif mode==2:
+                    plt.plot(self.lin_to_db(snrs), p_md, label=f'DoF={dof}')
+                elif mode==3:
+                    plt.semilogy(snrs, p_md, label=f'DoF={dof}')
+                elif mode==4:
+                    plt.semilogy(self.lin_to_db(snrs), p_md, label=f'DoF={dof}')
             plt.title('Probability of Missed Detection vs SNR for Different DoFs')
-            plt.xlabel('SNR (dB)')
-            plt.ylabel('Probability of Missed Detection')
+            if mode==1:
+                plt.xlabel('SNR')
+                plt.ylabel('Probability of Missed Detection')
+            elif mode==2:
+                plt.xlabel('SNR (dB)')
+                plt.ylabel('Probability of Missed Detection')
+            elif mode==3:
+                plt.xlabel('SNR')
+                plt.ylabel('Probability of Missed Detection (Logarithmic)')
+            elif mode==4:
+                plt.xlabel('SNR (dB)')
+                plt.ylabel('Probability of Missed Detection (Logarithmic)')
             plt.legend()
             plt.grid(True)
-            plt.savefig(self.figs_dir + 'md_vs_snr_dof.pdf', format='pdf')
+            plt.savefig(self.figs_dir + 'md_vs_snr_dof_{}.pdf'.format(mode), format='pdf')
             plt.show()
 
 
@@ -50,9 +65,7 @@ class SS_Detection(Signal_Utils):
 
         dofs = 2 * np.logspace(np.log10(N_min), np.log10(N_max), n_points).round().astype(int)
         # dofs = 2 * np.linspace(N_min, N_max, n_points).round().astype(int)
-        seen = set()
-        dofs = [x for x in dofs if not (x in seen or seen.add(x))]
-        dofs = np.array(dofs)
+        dofs = np.unique(dofs)
         snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_snr)
 
         if self.plot_level>=0:
@@ -61,16 +74,26 @@ class SS_Detection(Signal_Utils):
                 x = chi2.ppf(1-p_fa, dofs)
                 p_md = chi2.cdf(x/(1+snr), dofs)
                 if mode==1:
-                    plt.plot(dofs, np.log10(p_md), label='SNR={:0.2f}'.format(snr))
+                    plt.plot(dofs, p_md, label='SNR={:0.2f}'.format(snr))
                 elif mode==2:
                     plt.semilogx(dofs, p_md, label='SNR={:0.2f}'.format(snr))
+                elif mode==3:
+                    plt.semilogy(dofs, p_md, label='SNR={:0.2f}'.format(snr))
+                elif mode==4:
+                    plt.loglog(dofs, p_md, label='SNR={:0.2f}'.format(snr))
             plt.title('Probability of Missed Detection vs DoF for Different SNRs')
             if mode==1:
                 plt.xlabel('DoF')
-                plt.ylabel('Probability of Missed Detection (Logarithmic)')
+                plt.ylabel('Probability of Missed Detection')
             elif mode==2:
                 plt.xlabel('DoF (Logarithmic)')
                 plt.ylabel('Probability of Missed Detection')
+            elif mode==3:
+                plt.xlabel('DoF')
+                plt.ylabel('Probability of Missed Detection (Logarithmic)')
+            elif mode==4:
+                plt.xlabel('DoF (Logarithmic)')
+                plt.ylabel('Probability of Missed Detection (Logarithmic)')
             plt.legend()
             plt.grid(True)
             plt.savefig(self.figs_dir + 'md_vs_dof_snr_{}.pdf'.format(mode), format='pdf')
@@ -531,14 +554,20 @@ class SS_Detection(Signal_Utils):
                 sim_values_simple.append((det_rate_simple, missed_simple, fa_simple))
                 (det_rate_binary, missed_binary, fa_binary) = self.compute_slices_similarity(S_ML_bianry, region_gt)
                 sim_values_binary.append((det_rate_binary, missed_binary, fa_binary))
+            
+            # Compute the detection rate only where the signal is present and detected
+            metrics['det_rate']['ML'][snr] = np.mean(np.array([item[0] for item in sim_values_simple if item[0] is not None]))
+            metrics['det_rate']['ML_binary_search'][snr] = np.mean(np.array([item[0] for item in sim_values_binary if item[0] is not None]))
             # metrics['det_rate']['ML'][snr] = np.mean([item[0] for item in sim_values_simple])
-            metrics['det_rate']['ML'][snr] = np.mean(np.array([item[0] for item in sim_values_simple]) * (1.0-np.array([item[1] for item in sim_values_simple])))
-            metrics['missed_rate']['ML'][snr] = np.mean([item[1] for item in sim_values_simple])
-            metrics['fa_rate']['ML'][snr] = np.mean([item[2] for item in sim_values_simple])
             # metrics['det_rate']['ML_binary_search'][snr] = np.mean([item[0] for item in sim_values_binary])
-            metrics['det_rate']['ML_binary_search'][snr] = np.mean(np.array([item[0] for item in sim_values_binary]) * (1.0-np.array([item[1] for item in sim_values_binary])))
-            metrics['missed_rate']['ML_binary_search'][snr] = np.mean([item[1] for item in sim_values_binary])
-            metrics['fa_rate']['ML_binary_search'][snr] = np.mean([item[2] for item in sim_values_binary])
+            # metrics['det_rate']['ML'][snr] = np.mean(np.array([item[0] for item in sim_values_simple]) * (1.0-np.array([item[1] for item in sim_values_simple])))
+            # metrics['det_rate']['ML_binary_search'][snr] = np.mean(np.array([item[0] for item in sim_values_binary]) * (1.0-np.array([item[1] for item in sim_values_binary])))
+            
+            metrics['missed_rate']['ML'][snr] = np.mean([item[1] for item in sim_values_simple if item[1] is not None])
+            metrics['missed_rate']['ML_binary_search'][snr] = np.mean([item[1] for item in sim_values_binary if item[1] is not None])
+            
+            metrics['fa_rate']['ML'][snr] = np.mean([item[2] for item in sim_values_simple if item[2] is not None])
+            metrics['fa_rate']['ML_binary_search'][snr] = np.mean([item[2] for item in sim_values_binary if item[2] is not None])
 
         # self.print("Binary search ML detector failed in {} cases!".format(cnt),thr=0)
         # self.print("Binary search ML detector failed in {} percent!".format(cnt/(self.n_simulations*len(snrs))*100),thr=0)
@@ -574,11 +603,13 @@ class SS_Detection(Signal_Utils):
 
             # metrics['det_rate']['ML'][size] = np.mean([item[0] for item in sim_values_simple])
             metrics['det_rate']['ML'][size] = np.mean(np.array([item[0] for item in sim_values_simple]) * (1.0-np.array([item[1] for item in sim_values_simple])))
-            metrics['missed_rate']['ML'][size] = np.mean([item[1] for item in sim_values_simple])
-            metrics['fa_rate']['ML'][size] = np.mean([item[2] for item in sim_values_simple])
             # metrics['det_rate']['ML_binary_search'][size] = np.mean([item[0] for item in sim_values_binary])
             metrics['det_rate']['ML_binary_search'][size] = np.mean(np.array([item[0] for item in sim_values_binary]) * (1.0-np.array([item[1] for item in sim_values_binary])))
+            
+            metrics['missed_rate']['ML'][size] = np.mean([item[1] for item in sim_values_simple])
             metrics['missed_rate']['ML_binary_search'][size] = np.mean([item[1] for item in sim_values_binary])
+            
+            metrics['fa_rate']['ML'][size] = np.mean([item[2] for item in sim_values_simple])
             metrics['fa_rate']['ML_binary_search'][size] = np.mean([item[2] for item in sim_values_binary])
 
         return metrics
@@ -618,7 +649,7 @@ class SS_Detection(Signal_Utils):
                             method = 'Efficient ML'
                             color_id = 0
                         else:
-                            method = 'Simple ML'
+                            method = 'ML'
                             color_id = 1
                     elif 'NN' in plot_name:
                         method = 'U-Net'
@@ -626,10 +657,13 @@ class SS_Detection(Signal_Utils):
 
                     if metric=='det_rate':
                         y_label = 'Detection IoU Error Rate (Logarithmic)'
+                        metric_name = 'Detection IoU Error Rate'
                     elif metric=='missed_rate':
                         y_label = 'Missed Detection Rate (Logarithmic)'
+                        metric_name = 'Missed Detection Rate'
                     elif metric=='fa_rate':
                         y_label = 'False Alarm Rate (Logarithmic)'
+                        metric_name = 'False Alarm Rate'
 
                     y = np.array(list(plot_dic[metric][plot_name][fixed_param].values()))
                     if metric=='det_rate':
@@ -652,7 +686,7 @@ class SS_Detection(Signal_Utils):
                     axes[k].grid(True)
                 # color_id += 1
 
-            fig.suptitle('{} vs {} for different {}s'.format(y_label, param_name, fixed_param_name), fontsize=20)
+            fig.suptitle('{} vs {} for different {}s'.format(metric_name, param_name, fixed_param_name), fontsize=20)
             # fig.tight_layout(rect=[0, 0, 1, 0.95])
             fig.tight_layout()
             plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')
