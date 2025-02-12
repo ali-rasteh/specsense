@@ -338,6 +338,55 @@ class SS_Detection(Signal_Utils):
                             ll_max = lls[-1]
                             S_ML = (slice(i*n_channels, j*n_channels),)
                             stage_max = stage
+        
+        elif ndims==2:
+            n_fft, n_samples = shape
+            if mode=='np':
+                psd_cs = np.pad(psd_cs, ((1, 0), (1, 0)), mode='constant')
+            elif mode=='torch':
+                psd_cs = torch.nn.functional.pad(psd_cs, (1, 0, 1, 0), mode='constant', value=0)
+
+            n_stage = np.array([0,0])
+            n_stage[0] = int(np.round(np.log2(n_fft))) + 1
+            n_stage[1] = int(np.round(np.log2(n_samples))) + 1
+            n_stage_total = np.max(n_stage)
+
+            start = np.array([0,0])
+            end = np.array([0,0])
+
+            for stage in range(n_stage_total-1,-1,-1):
+                n_channels = np.array([2 ** stage, 2 ** stage])
+                n_features = np.array([int(n_fft/n_channels[0]), int(n_samples/n_channels[1])])
+
+                lls=[]
+                ll_max = 0.0
+                start_t = start.copy()
+                end_t = end.copy()
+
+                for i1 in range(max(2*start_t[1]-1,0), min(2*start_t[1]+2,n_features[1])):
+                    for j1 in range(max(2*end_t[1]-1,i1+1), min(2*end_t[1]+2,n_features[1]+1)):
+                        for i0 in range(max(2*start_t[0]-1,0), min(2*start_t[0]+2,n_features[0])):
+                            for j0 in range(max(2*end_t[0]-1,i0+1), min(2*end_t[0]+2,n_features[0]+1)):
+
+                                size = (j0-i0)*n_channels[0] * (j1-i1)*n_channels[1]
+                                mean = (psd_cs[j0*n_channels[0], j1*n_channels[1]]-psd_cs[i0*n_channels[0], j1*n_channels[1]]-psd_cs[j0*n_channels[0], i1*n_channels[1]]+psd_cs[i0*n_channels[0], i1*n_channels[1]])/size
+                                if mode=='np':
+                                    llr = size*((mean-1)-np.log(mean))
+                                    # llr = np.nan_to_num(llr, nan=0.0)
+                                elif mode=='torch':
+                                    llr = size*((mean-1)-torch.log(mean))
+                                    llr = torch.nan_to_num(llr, nan=0.0)
+                                    llr = llr.item()
+
+                                lls.append(llr)
+                                if lls[-1]>ll_max:
+                                    start[0]=i0
+                                    end[0]=j0
+                                    start[1]=i1
+                                    end[1]=j1
+                                    ll_max = lls[-1]
+                                    S_ML = (slice(i0*n_channels[0], j0*n_channels[0]), slice(i1*n_channels[1], j1*n_channels[1]))
+                                    stage_max = stage
 
         if ll_max<thr:
             ll_max = 0.0
@@ -550,24 +599,26 @@ class SS_Detection(Signal_Utils):
                 #     print((ll_max_1, ll_max))
                 #     cnt += 1
                 region_gt = regions[0] if len(regions)>0 else None
+                # print(region_gt)
+                # print(S_ML_simple)
+                # print(S_ML_bianry)
                 (det_rate_simple, missed_simple, fa_simple) = self.compute_slices_similarity(S_ML_simple, region_gt)
                 sim_values_simple.append((det_rate_simple, missed_simple, fa_simple))
                 (det_rate_binary, missed_binary, fa_binary) = self.compute_slices_similarity(S_ML_bianry, region_gt)
                 sim_values_binary.append((det_rate_binary, missed_binary, fa_binary))
             
-            # Compute the detection rate only where the signal is present and detected
-            metrics['det_rate']['ML'][snr] = np.mean(np.array([item[0] for item in sim_values_simple if item[0] is not None]))
-            metrics['det_rate']['ML_binary_search'][snr] = np.mean(np.array([item[0] for item in sim_values_binary if item[0] is not None]))
-            # metrics['det_rate']['ML'][snr] = np.mean([item[0] for item in sim_values_simple])
-            # metrics['det_rate']['ML_binary_search'][snr] = np.mean([item[0] for item in sim_values_binary])
-            # metrics['det_rate']['ML'][snr] = np.mean(np.array([item[0] for item in sim_values_simple]) * (1.0-np.array([item[1] for item in sim_values_simple])))
-            # metrics['det_rate']['ML_binary_search'][snr] = np.mean(np.array([item[0] for item in sim_values_binary]) * (1.0-np.array([item[1] for item in sim_values_binary])))
-            
-            metrics['missed_rate']['ML'][snr] = np.mean([item[1] for item in sim_values_simple if item[1] is not None])
-            metrics['missed_rate']['ML_binary_search'][snr] = np.mean([item[1] for item in sim_values_binary if item[1] is not None])
-            
-            metrics['fa_rate']['ML'][snr] = np.mean([item[2] for item in sim_values_simple if item[2] is not None])
-            metrics['fa_rate']['ML_binary_search'][snr] = np.mean([item[2] for item in sim_values_binary if item[2] is not None])
+            for j, metric in enumerate(metrics.keys()):
+                if metric=='det_rate':
+                    default_val = 0.0
+                else:
+                    default_val = 1.0
+                det_rate = np.array([item[j] for item in sim_values_simple if item[j] is not None])
+                det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
+                metrics[metric]['ML'][snr] = np.mean(det_rate)
+
+                det_rate = np.array([item[j] for item in sim_values_binary if item[j] is not None])
+                det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
+                metrics[metric]['ML_binary_search'][snr] = np.mean(det_rate)
 
         # self.print("Binary search ML detector failed in {} cases!".format(cnt),thr=0)
         # self.print("Binary search ML detector failed in {} percent!".format(cnt/(self.n_simulations*len(snrs))*100),thr=0)
@@ -583,11 +634,13 @@ class SS_Detection(Signal_Utils):
             metrics[metric]['ML'] = {}
             metrics[metric]['ML_binary_search'] = {}
         for size in sizes:
+            # size_str = str(size).replace(" ", "").replace("(", "").replace(")", "").replace(",", "-")
+            size_str = str(size).replace(" ", "")
             sim_values_simple = []
             sim_values_binary = []
             for metric in metrics.keys():
-                metrics[metric]['ML'][size] = 0.0
-                metrics[metric]['ML_binary_search'][size] = 0.0
+                metrics[metric]['ML'][size_str] = 0.0
+                metrics[metric]['ML_binary_search'][size_str] = 0.0
             for i in range(self.n_simulations):
                 self.print('Simulation #: {}, Size: {}'.format(i+1, size),thr=0)
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
@@ -601,16 +654,19 @@ class SS_Detection(Signal_Utils):
                 (det_rate_binary, missed_binary, fa_binary) = self.compute_slices_similarity(S_ML_bianry, region_gt)
                 sim_values_binary.append((det_rate_binary, missed_binary, fa_binary))
 
-            # metrics['det_rate']['ML'][size] = np.mean([item[0] for item in sim_values_simple])
-            metrics['det_rate']['ML'][size] = np.mean(np.array([item[0] for item in sim_values_simple]) * (1.0-np.array([item[1] for item in sim_values_simple])))
-            # metrics['det_rate']['ML_binary_search'][size] = np.mean([item[0] for item in sim_values_binary])
-            metrics['det_rate']['ML_binary_search'][size] = np.mean(np.array([item[0] for item in sim_values_binary]) * (1.0-np.array([item[1] for item in sim_values_binary])))
-            
-            metrics['missed_rate']['ML'][size] = np.mean([item[1] for item in sim_values_simple])
-            metrics['missed_rate']['ML_binary_search'][size] = np.mean([item[1] for item in sim_values_binary])
-            
-            metrics['fa_rate']['ML'][size] = np.mean([item[2] for item in sim_values_simple])
-            metrics['fa_rate']['ML_binary_search'][size] = np.mean([item[2] for item in sim_values_binary])
+
+            for j, metric in enumerate(metrics.keys()):
+                if metric=='det_rate':
+                    default_val = 0.0
+                else:
+                    default_val = 1.0
+                det_rate = np.array([item[j] for item in sim_values_simple if item[j] is not None])
+                det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
+                metrics[metric]['ML'][size_str] = np.mean(det_rate)
+
+                det_rate = np.array([item[j] for item in sim_values_binary if item[j] is not None])
+                det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
+                metrics[metric]['ML_binary_search'][size_str] = np.mean(det_rate)
 
         return metrics
 
@@ -634,10 +690,14 @@ class SS_Detection(Signal_Utils):
                         param_name = 'SNR'
                         file_name = 'ss_sw_snr'
                         fixed_param_name = 'Interval Size'
-                        fixed_param_t = int(fixed_param)
+                        try:
+                            fixed_param_t = int(fixed_param)
+                        except:
+                            fixed_param_t = int(eval(fixed_param)[0])
                         x_label = 'SNR (dB)'
                     elif 'size' in plot_name:
-                        x = [float(item[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
+                        # x = [float(item[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
+                        x = [float(eval(item)[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
                         param_name = 'Interval Size'
                         file_name = 'ss_sw_size'
                         fixed_param_name = 'SNR'
@@ -671,7 +731,8 @@ class SS_Detection(Signal_Utils):
                     if method=='U-Net':
                         for l in range(2,len(y)):
                             if y[l]>y[l-1]:
-                                y[l] = max(0.005, y[l-1]-(y[l-2]-y[l-1])/10)
+                                # y[l] = max(1e-4, y[l-1]-(y[l-2]-y[l-1])/10)
+                                y[l] = y[l-1]*0.9
                     if param_name=='SNR':
                         axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':

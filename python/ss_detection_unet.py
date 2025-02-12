@@ -903,15 +903,15 @@ class SS_Detection_Unet(Signal_Utils):
             union = (pred_c | target_c).float().sum(dim=dim_nb)
             det_rate = (intersection + self.eval_smooth) / (union + self.eval_smooth)
             indices = target_sum & pred_sum
-            det_rate = det_rate[indices].mean().item()
+            det_rate = det_rate[indices].sum().item()
             det_rate_n = indices.float().sum().item()
 
             # Compute missed detection rate
-            missed = (target_sum & ~pred_sum).float().sum() / target_sum.float().sum()
+            missed = (target_sum & ~pred_sum).float().sum().item()
             missed_n = target_sum.float().sum().item()
 
             # Compute false alarm rate
-            false_alarm = (~target_sum & pred_sum).float().sum() / (~target_sum).float().sum()
+            false_alarm = (~target_sum & pred_sum).float().sum().item()
             false_alarm_n = (~target_sum).float().sum().item()
 
         elif 'detection' in mode:
@@ -956,7 +956,7 @@ class SS_Detection_Unet(Signal_Utils):
             union = torch.prod(union, dim=-1)
 
             det_rate = ((intersection+self.eval_smooth)/(union+self.eval_smooth))
-            det_rate = det_rate.mean().item()
+            det_rate = det_rate.sum().item()
             det_rate_n = batch_size
             # raise InterruptedError("Interrupted manually.")
 
@@ -1009,11 +1009,11 @@ class SS_Detection_Unet(Signal_Utils):
                     output = self.extract_bbox_efficient(output, min_area=self.contours_min_area, max_gap=self.contours_max_gap)
                 if (mode=='segmentation' and (self.mask_mode=='binary' or self.mask_mode=='channels')):
                     (det_rate_b, missed_b, false_alarm_b) = self.intersection_over_union(output, gt, mode=mode)
-                    det_rate += (det_rate_b[0]*det_rate_b[1])
+                    det_rate += (det_rate_b[0])
                     det_rate_n += det_rate_b[1]
-                    missed += (missed_b[0]*missed_b[1])
+                    missed += (missed_b[0])
                     missed_n += missed_b[1]
-                    false_alarm += (false_alarm_b[0]*false_alarm_b[1])
+                    false_alarm += (false_alarm_b[0])
                     false_alarm_n += false_alarm_b[1]
                 elif mode=='segmentation' and self.mask_mode=='snr':
                     det_rate += F.mse_loss(output, gt).item()
@@ -1021,11 +1021,11 @@ class SS_Detection_Unet(Signal_Utils):
                     mask_energy += torch.mean(gt**2).item()
                 elif 'detection' in mode:
                     (det_rate_b, missed_b, false_alarm_b) = self.intersection_over_union(output, gt, mode=mode)
-                    det_rate += (det_rate_b[0]*det_rate_b[1])
+                    det_rate += (det_rate_b[0])
                     det_rate_n += det_rate_b[1]
-                    missed += (missed_b[0]*missed_b[1])
+                    missed += (missed_b[0])
                     missed_n += missed_b[1]
-                    false_alarm += (false_alarm_b[0]*false_alarm_b[1])
+                    false_alarm += (false_alarm_b[0])
                     false_alarm_n += false_alarm_b[1]
                 if self.draw_histogram:
                     plt.figure(figsize=(10, 6))
