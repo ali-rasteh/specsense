@@ -709,7 +709,7 @@ class SS_Detection(Signal_Utils):
                             method = 'Efficient ML'
                             color_id = 0
                         else:
-                            method = 'ML'
+                            method = 'Exhaustive ML'
                             color_id = 1
                     elif 'NN' in plot_name:
                         method = 'U-Net'
@@ -730,6 +730,7 @@ class SS_Detection(Signal_Utils):
                         y = 1.0 - y
                     if method=='U-Net':
                         for l in range(2,len(y)):
+                            y[l] = max(y[l], 1e-6)
                             if y[l]>y[l-1]:
                                 # y[l] = max(1e-4, y[l-1]-(y[l-2]-y[l-1])/10)
                                 y[l] = y[l-1]*0.9
@@ -740,14 +741,14 @@ class SS_Detection(Signal_Utils):
                         # plt.xscale('log')
                     # plt.yscale('log')
                     axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t), fontsize=15, fontweight='bold')
-                    axes[k].set_xlabel(x_label, fontsize=15)
-                    axes[k].set_ylabel(y_label, fontsize=12)
+                    axes[k].set_xlabel(x_label, fontsize=18)
+                    axes[k].set_ylabel(y_label, fontsize=13)
                     axes[k].legend(fontsize=12)
-                    axes[k].tick_params(axis='both', which='major', labelsize=12)
+                    axes[k].tick_params(axis='both', which='major', labelsize=14)
                     axes[k].grid(True)
                 # color_id += 1
 
-            fig.suptitle('{} vs {} for different {}s'.format(metric_name, param_name, fixed_param_name), fontsize=20)
+            # fig.suptitle('{} vs {} for different {}s'.format(metric_name, param_name, fixed_param_name), fontsize=20)
             # fig.tight_layout(rect=[0, 0, 1, 0.95])
             fig.tight_layout()
             plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')
