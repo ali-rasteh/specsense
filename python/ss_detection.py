@@ -22,7 +22,7 @@ class SS_Detection(Signal_Utils):
         self.print("Initialized Spectrum Sensing class instance.",thr=0)
 
 
-    def plot_MD_vs_SNR(self, snr_min=0.1, snr_max=100.0, n_points=1000, N_min=1, N_max=1024, n_N=11, p_fa=1e-6, mode=1):
+    def plot_MD_vs_SNR(self, N=1024, snr_min=0.1, snr_max=100.0, n_points=1000, N_min=1, N_max=256, n_N=9, p_fas=[1e-6, 1e-8], mode=1):
 
         snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_points)
         dofs = 2 * np.logspace(np.log10(N_min), np.log10(N_max), n_N).round().astype(int)
@@ -30,38 +30,47 @@ class SS_Detection(Signal_Utils):
         dofs = np.unique(dofs)
 
         if self.plot_level>=0:
-            plt.figure(figsize=(8, 6))
-            for dof in dofs:
-                x = chi2.ppf(1-p_fa, dof)
-                p_md = chi2.cdf(x/(1+snrs), dof)
+            fig, axs = plt.subplots(1, len(p_fas), figsize=(12, 6), sharey=True)
+            for idx, p_fa in enumerate(p_fas):
+                for dof in dofs:
+                    x = chi2.ppf(1-p_fa*(2/N**2), dof)
+                    p_md = chi2.cdf(x/(1+snrs), dof)
+                    label='DoF={}'.format(dof)
+                    if mode==1:
+                        axs[idx].plot(snrs, p_md, label=label)
+                    elif mode==2:
+                        axs[idx].plot(self.lin_to_db(snrs), p_md, label=label)
+                    elif mode==3:
+                        axs[idx].semilogy(snrs, p_md, label=label)
+                    elif mode==4:
+                        axs[idx].semilogy(self.lin_to_db(snrs), p_md, label=label)
                 if mode==1:
-                    plt.plot(snrs, p_md, label=f'DoF={dof}')
+                    xlabel='SNR'
+                    ylabel='Probability of Missed Detection'
                 elif mode==2:
-                    plt.plot(self.lin_to_db(snrs), p_md, label=f'DoF={dof}')
+                    xlabel='SNR (dB)'
+                    ylabel='Probability of Missed Detection'
                 elif mode==3:
-                    plt.semilogy(snrs, p_md, label=f'DoF={dof}')
+                    xlabel='SNR'
+                    ylabel='Probability of Missed Detection (Log)'
                 elif mode==4:
-                    plt.semilogy(self.lin_to_db(snrs), p_md, label=f'DoF={dof}')
-            plt.title('Probability of Missed Detection vs SNR for Different DoFs')
-            if mode==1:
-                plt.xlabel('SNR')
-                plt.ylabel('Probability of Missed Detection')
-            elif mode==2:
-                plt.xlabel('SNR (dB)')
-                plt.ylabel('Probability of Missed Detection')
-            elif mode==3:
-                plt.xlabel('SNR')
-                plt.ylabel('Probability of Missed Detection (Logarithmic)')
-            elif mode==4:
-                plt.xlabel('SNR (dB)')
-                plt.ylabel('Probability of Missed Detection (Logarithmic)')
-            plt.legend()
-            plt.grid(True)
+                    xlabel='SNR (dB)'
+                    ylabel='Probability of Missed Detection (Log)'
+                
+                axs[idx].set_title(r'$P_{FA}$' + '={:.0e}'.format(p_fa), fontsize=22)
+                axs[idx].set_xlabel(xlabel, fontsize=24)
+                axs[idx].set_ylabel(ylabel, fontsize=16)
+                axs[idx].grid(True)
+                axs[idx].legend(fontsize=14)
+                axs[idx].tick_params(axis='both', which='major', labelsize=16)
+            
+            fig.suptitle('Probability of Missed Detection vs SNR for Different DoFs', fontsize=22)
+            fig.tight_layout()
             plt.savefig(self.figs_dir + 'md_vs_snr_dof_{}.pdf'.format(mode), format='pdf')
             plt.show()
 
 
-    def plot_MD_vs_DoF(self, N_min=2, N_max=2048, n_points=1000, snr_min=0.125, snr_max=64, n_snr=10, p_fa=1e-6, mode=1):
+    def plot_MD_vs_DoF(self, N=1024, N_min=2, N_max=2048, n_points=1000, snr_min=0.125, snr_max=16, n_snr=8, p_fas=[1e-6, 1e-8], mode=1):
 
         dofs = 2 * np.logspace(np.log10(N_min), np.log10(N_max), n_points).round().astype(int)
         # dofs = 2 * np.linspace(N_min, N_max, n_points).round().astype(int)
@@ -69,33 +78,43 @@ class SS_Detection(Signal_Utils):
         snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_snr)
 
         if self.plot_level>=0:
-            plt.figure(figsize=(8, 6))
-            for snr in snrs:
-                x = chi2.ppf(1-p_fa, dofs)
-                p_md = chi2.cdf(x/(1+snr), dofs)
+            fig, axs = plt.subplots(1, len(p_fas), figsize=(12, 6), sharey=True)
+            for idx, p_fa in enumerate(p_fas):
+                for snr in snrs:
+                    x = chi2.ppf(1-p_fa*(2/N**2), dofs)
+                    p_md = chi2.cdf(x/(1+snr), dofs)
+                    label='SNR={:0.2f}'.format(snr)
+                    if mode==1:
+                        axs[idx].plot(dofs, p_md, label=label)
+                    elif mode==2:
+                        axs[idx].semilogx(dofs, p_md, label=label)
+                    elif mode==3:
+                        axs[idx].semilogy(dofs, p_md, label=label)
+                    elif mode==4:
+                        axs[idx].loglog(dofs, p_md, label=label)
+
                 if mode==1:
-                    plt.plot(dofs, p_md, label='SNR={:0.2f}'.format(snr))
+                    xlabel='DoF'
+                    ylabel='Probability of Missed Detection'
                 elif mode==2:
-                    plt.semilogx(dofs, p_md, label='SNR={:0.2f}'.format(snr))
+                    xlabel='DoF (Logarithmic)'
+                    ylabel='Probability of Missed Detection'
                 elif mode==3:
-                    plt.semilogy(dofs, p_md, label='SNR={:0.2f}'.format(snr))
+                    xlabel='DoF'
+                    ylabel='Probability of Missed Detection (Log)'
                 elif mode==4:
-                    plt.loglog(dofs, p_md, label='SNR={:0.2f}'.format(snr))
-            plt.title('Probability of Missed Detection vs DoF for Different SNRs')
-            if mode==1:
-                plt.xlabel('DoF')
-                plt.ylabel('Probability of Missed Detection')
-            elif mode==2:
-                plt.xlabel('DoF (Logarithmic)')
-                plt.ylabel('Probability of Missed Detection')
-            elif mode==3:
-                plt.xlabel('DoF')
-                plt.ylabel('Probability of Missed Detection (Logarithmic)')
-            elif mode==4:
-                plt.xlabel('DoF (Logarithmic)')
-                plt.ylabel('Probability of Missed Detection (Logarithmic)')
-            plt.legend()
-            plt.grid(True)
+                    xlabel='DoF (Logarithmic)'
+                    ylabel='Probability of Missed Detection (Log)'
+
+                axs[idx].set_title(r'$P_{FA}$' + '={:.0e}'.format(p_fa), fontsize=22)
+                axs[idx].set_xlabel(xlabel, fontsize=24)
+                axs[idx].set_ylabel(ylabel, fontsize=16)
+                axs[idx].grid(True)
+                axs[idx].legend(fontsize=14)
+                axs[idx].tick_params(axis='both', which='major', labelsize=16)
+
+            fig.suptitle('Probability of Missed Detection vs DoF for Different SNRs', fontsize=22)
+            fig.tight_layout()
             plt.savefig(self.figs_dir + 'md_vs_dof_snr_{}.pdf'.format(mode), format='pdf')
             plt.show()
 
@@ -393,6 +412,53 @@ class SS_Detection(Signal_Utils):
             S_ML = None
         return(S_ML, ll_max)
 
+
+
+    def ML_detector_binary_search_3(self, psd, n_adj_search=1, n_largest=3, thr=0.0, mode='np'):
+        ll_max = 0.0
+        S_ML = None
+        n_channels_max = 1
+        ll_list=[]
+
+        shape = psd.shape
+        ndims = len(shape)
+        if ndims==1:
+            n_fft = shape[0]
+            n_stage = int(np.round(np.log2(n_fft))) + 1
+            for i in range(n_stage):
+                n_channels = 2 ** (i)
+                n_features = int(n_fft/n_channels)
+                lls=[]
+                for j in range(n_features):
+                    lls.append(self.likelihood(psd[j*n_channels:(j+1)*n_channels]))
+                if np.max(lls)>ll_max:
+                    ll_max = np.max(lls)
+                    S_ML = (slice(np.argmax(lls)*n_channels, (np.argmax(lls)+1)*n_channels),)
+                    n_channels_max = n_channels
+
+                largest_lls = heapq.nlargest(n_largest, lls)
+                ll_list = ll_list + [((slice(idx*n_channels, (idx+1)*n_channels),), ll, n_channels) for idx, ll in enumerate(lls) if ll in largest_lls]
+                
+            S_ML_list = [item[0] for item in ll_list]
+            ll_max_list = [item[1] for item in ll_list]
+            n_channels_list = [item[2] for item in ll_list]
+            largest_lls = heapq.nlargest(n_largest, ll_max_list)
+            ll_list = [(S_ML_list[idx],ll_max_list[idx],n_channels_list[idx]) for idx, ll in enumerate(ll_max_list) if ll in largest_lls]
+            
+
+            for (S_ML_c, ll_max_c, n_channels) in ll_list:
+                start = max(S_ML_c[0].start-n_adj_search*n_channels, 0)
+                stop = min(S_ML_c[0].stop+n_adj_search*n_channels, n_fft)
+                (S_ML_m, ll_max_m) = self.ML_detector_efficient(psd=psd[start:stop], thr=thr, mode=mode)
+                if (S_ML_m is not None) and ll_max_m>ll_max:
+                    S_ML = (slice(start + S_ML_m[0].start, start + S_ML_m[0].stop),)
+                    ll_max = ll_max_m
+
+        if ll_max<thr:
+            ll_max = 0.0
+            S_ML = None
+        return(S_ML, ll_max)
+    
 
 
     def compute_cumsum(self, X, mode='np'):
@@ -719,6 +785,8 @@ class SS_Detection(Signal_Utils):
                         y_label = 'Detection IoU Error Rate (Logarithmic)'
                         metric_name = 'Detection IoU Error Rate'
                     elif metric=='missed_rate':
+                        if method == 'U-Net':
+                            continue
                         y_label = 'Missed Detection Rate (Logarithmic)'
                         metric_name = 'Missed Detection Rate'
                     elif metric=='fa_rate':
@@ -728,12 +796,12 @@ class SS_Detection(Signal_Utils):
                     y = np.array(list(plot_dic[metric][plot_name][fixed_param].values()))
                     if metric=='det_rate':
                         y = 1.0 - y
-                    if method=='U-Net':
-                        for l in range(2,len(y)):
-                            y[l] = max(y[l], 1e-6)
-                            if y[l]>y[l-1]:
-                                # y[l] = max(1e-4, y[l-1]-(y[l-2]-y[l-1])/10)
-                                y[l] = y[l-1]*0.9
+                    # if method=='U-Net':
+                    #     for l in range(2,len(y)):
+                    #         y[l] = max(y[l], 1e-6)
+                    #         if y[l]>y[l-1]:
+                    #             # y[l] = max(1e-4, y[l-1]-(y[l-2]-y[l-1])/10)
+                    #             y[l] = y[l-1]*0.9
                     if param_name=='SNR':
                         axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':

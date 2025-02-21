@@ -189,7 +189,7 @@ if __name__ == '__main__':
     ss_det.plot_MD_vs_DoF(mode=2)
     ss_det.plot_MD_vs_DoF(mode=3)
     ss_det.plot_MD_vs_DoF(mode=4)
-    # raise SystemExit
+    raise SystemExit
 
     if params.generate_dataset:
         if params.train:
