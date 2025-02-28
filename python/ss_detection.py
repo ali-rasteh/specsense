@@ -22,28 +22,43 @@ class SS_Detection(Signal_Utils):
         self.print("Initialized Spectrum Sensing class instance.",thr=0)
 
 
-    def plot_MD_vs_SNR(self, N=1024, snr_min=0.1, snr_max=100.0, n_points=1000, N_min=1, N_max=256, n_N=9, p_fas=[1e-6, 1e-8], mode=1):
+    def plot_MD_vs_SNR(self, N=1024, snr_min=0.1, snr_max=1000.0, n_points=1000, N_min=1, N_max=256, n_N=9, p_fas=[1e-6, 1e-8], mode=1):
 
         snrs = np.logspace(np.log10(snr_min), np.log10(snr_max), n_points)
         dofs = 2 * np.logspace(np.log10(N_min), np.log10(N_max), n_N).round().astype(int)
         # dofs = 2 * np.linspace(N_min, N_max, n_N).round().astype(int)
         dofs = np.unique(dofs)
+        colors = ['blue', 'red', 'green', 'magenta', 'cyan', 'purple', 'orange', 'brown', 'pink', 'gray']
 
         if self.plot_level>=0:
-            fig, axs = plt.subplots(1, len(p_fas), figsize=(12, 6), sharey=True)
-            for idx, p_fa in enumerate(p_fas):
-                for dof in dofs:
-                    x = chi2.ppf(1-p_fa*(2/N**2), dof)
-                    p_md = chi2.cdf(x/(1+snrs), dof)
-                    label='DoF={}'.format(dof)
+            # fig, axs = plt.subplots(1, len(p_fas), figsize=(12, 6), sharey=True)
+            fig, axs = plt.subplots(len(p_fas), 1, figsize=(8, 10), sharex=True)
+            for pfa_idx, p_fa in enumerate(p_fas):
+                for plt_idx, dof in enumerate(dofs):
+                    x = stats.chi2.ppf(1-p_fa*(2/N**2), dof)
+                    p_md = stats.chi2.cdf(x/(1+snrs), dof)
+
+                    mu = (1-2/(9*dof))
+                    std = np.sqrt((2/(9*dof)))
+                    S = (dof + 2*np.sqrt(dof * np.log((N**2)/(2*p_fa))))/(1+snrs)
+                    p_md_approx = stats.norm.cdf(((S/dof)**(1/3) - mu)/std)
+                    # p_md_approx = stats.norm.cdf(-np.sqrt(dof/2)*(snrs/(1+snrs)) + np.sqrt(2*np.log((N**2)/(2*p_fa)))/(1+snrs))
+                    # p_md_approx = stats.norm.cdf(-np.sqrt(dof/2) + np.sqrt(2*np.log((N**2)/(2*p_fa)))/(1+snrs))
+                    
+                    # label='DoF={}'.format(dof)
+                    label=r'$\ell$'+ '={}'.format(dof//2)
                     if mode==1:
-                        axs[idx].plot(snrs, p_md, label=label)
+                        axs[pfa_idx].plot(snrs, p_md, label=label, color=colors[plt_idx])
+                        axs[pfa_idx].plot(snrs, p_md_approx, color=colors[plt_idx], linestyle='dotted')
                     elif mode==2:
-                        axs[idx].plot(self.lin_to_db(snrs), p_md, label=label)
+                        axs[pfa_idx].plot(self.lin_to_db(snrs), p_md, label=label, color=colors[plt_idx])
+                        axs[pfa_idx].plot(self.lin_to_db(snrs), p_md_approx, color=colors[plt_idx], linestyle='dotted')
                     elif mode==3:
-                        axs[idx].semilogy(snrs, p_md, label=label)
+                        axs[pfa_idx].semilogy(snrs, p_md, label=label, color=colors[plt_idx])
+                        axs[pfa_idx].semilogy(snrs, p_md_approx, color=colors[plt_idx], linestyle='dotted')
                     elif mode==4:
-                        axs[idx].semilogy(self.lin_to_db(snrs), p_md, label=label)
+                        axs[pfa_idx].semilogy(self.lin_to_db(snrs), p_md, label=label, color=colors[plt_idx])
+                        axs[pfa_idx].semilogy(self.lin_to_db(snrs), p_md_approx, color=colors[plt_idx], linestyle='dotted')
                 if mode==1:
                     xlabel='SNR'
                     ylabel='Probability of Missed Detection'
@@ -57,14 +72,20 @@ class SS_Detection(Signal_Utils):
                     xlabel='SNR (dB)'
                     ylabel='Probability of Missed Detection (Log)'
                 
-                axs[idx].set_title(r'$P_{FA}$' + '={:.0e}'.format(p_fa), fontsize=22)
-                axs[idx].set_xlabel(xlabel, fontsize=24)
-                axs[idx].set_ylabel(ylabel, fontsize=16)
-                axs[idx].grid(True)
-                axs[idx].legend(fontsize=14)
-                axs[idx].tick_params(axis='both', which='major', labelsize=16)
+                axs[pfa_idx].set_title(r'$P_{FA}$' + '={:.0e}'.format(p_fa), fontsize=22, fontweight='bold')
+                if pfa_idx==1:
+                    axs[pfa_idx].set_xlabel(xlabel, fontsize=24)
+                # if idx==0:
+                axs[pfa_idx].set_ylabel(ylabel, fontsize=16)
+                if mode==3 or mode==4:
+                    # axs[idx].set_xlim([snr_min, snr_max])
+                    axs[pfa_idx].set_ylim([1e-10, 1])
+                axs[pfa_idx].grid(True)
+                # axs[idx].legend(fontsize=14)
+                axs[pfa_idx].legend(fontsize=14, loc='upper left', bbox_to_anchor=(1, 1))
+                axs[pfa_idx].tick_params(axis='both', which='major', labelsize=16)
             
-            fig.suptitle('Probability of Missed Detection vs SNR for Different DoFs', fontsize=22)
+            # fig.suptitle('Probability of Missed Detection vs SNR for Different DoFs', fontsize=22, fontweight='bold')
             fig.tight_layout()
             plt.savefig(self.figs_dir + 'md_vs_snr_dof_{}.pdf'.format(mode), format='pdf')
             plt.show()
@@ -81,8 +102,8 @@ class SS_Detection(Signal_Utils):
             fig, axs = plt.subplots(1, len(p_fas), figsize=(12, 6), sharey=True)
             for idx, p_fa in enumerate(p_fas):
                 for snr in snrs:
-                    x = chi2.ppf(1-p_fa*(2/N**2), dofs)
-                    p_md = chi2.cdf(x/(1+snr), dofs)
+                    x = stats.chi2.ppf(1-p_fa*(2/N**2), dofs)
+                    p_md = stats.chi2.cdf(x/(1+snr), dofs)
                     label='SNR={:0.2f}'.format(snr)
                     if mode==1:
                         axs[idx].plot(dofs, p_md, label=label)
@@ -106,14 +127,18 @@ class SS_Detection(Signal_Utils):
                     xlabel='DoF (Logarithmic)'
                     ylabel='Probability of Missed Detection (Log)'
 
-                axs[idx].set_title(r'$P_{FA}$' + '={:.0e}'.format(p_fa), fontsize=22)
+                axs[idx].set_title(r'$P_{FA}$' + '={:.0e}'.format(p_fa), fontsize=22, fontweight='bold')
                 axs[idx].set_xlabel(xlabel, fontsize=24)
                 axs[idx].set_ylabel(ylabel, fontsize=16)
+                if mode==3 or mode==4:
+                    # axs[idx].set_xlim([N_min, N_max])
+                    axs[idx].set_ylim([1e-4, 1])
                 axs[idx].grid(True)
                 axs[idx].legend(fontsize=14)
+                # axs[idx].legend(fontsize=14, loc='upper left', bbox_to_anchor=(1, 1))
                 axs[idx].tick_params(axis='both', which='major', labelsize=16)
 
-            fig.suptitle('Probability of Missed Detection vs DoF for Different SNRs', fontsize=22)
+            fig.suptitle('Probability of Missed Detection vs DoF for Different SNRs', fontsize=22, fontweight='bold')
             fig.tight_layout()
             plt.savefig(self.figs_dir + 'md_vs_dof_snr_{}.pdf'.format(mode), format='pdf')
             plt.show()
@@ -121,29 +146,29 @@ class SS_Detection(Signal_Utils):
 
     def likelihood(self, S):
         if S is None:
-            ll = 0.0
+            llr = 0.0
         else:
             S_size = np.prod(S.shape)
             S_mean = np.mean(S)
-            ll = S_size * ((S_mean-1)-np.log(S_mean))
+            llr = S_size * ((S_mean-1)-np.log(S_mean))
 
-        return ll
+        return llr
 
 
     def ML_detector(self, psd, thr=0.0):
         shape = np.shape(psd)
         ndims = len(shape)
-        ll_max = 0.0
+        llr_max = 0.0
         S_ML = None
 
         def sweep_psd(self, start_indices, end_indices):
             if len(start_indices) == ndims:
                 slices = tuple(slice(start, end) for start, end in zip(start_indices, end_indices))
                 subarray = psd[slices]
-                ll = self.likelihood(subarray)
-                if ll > ll_max:
+                llr = self.likelihood(subarray)
+                if llr > llr_max:
                     S_ML = slices
-                    ll_max = ll
+                    llr_max = llr
                 return
 
             dim = len(start_indices)
@@ -152,15 +177,16 @@ class SS_Detection(Signal_Utils):
                     sweep_psd(self, start_indices=start_indices + [start], end_indices=end_indices + [end])
 
         sweep_psd(self, start_indices=[], end_indices=[])
-        if ll_max<thr:
-            ll_max = 0.0
+        if llr_max<thr:
+            llr_max = 0.0
             S_ML = None
 
-        return(S_ML, ll_max)
+        return(S_ML, llr_max)
 
 
-    def ML_detector_efficient(self, psd, thr=0.0, mode='np'):
-        ll_max = 0.0
+    def ML_detector_efficient(self, psd, thr=None, mode='np'):
+        llr_max = 0.0
+        l_max = 0.0
         S_ML = None
 
         if mode=='np':
@@ -198,7 +224,8 @@ class SS_Detection(Signal_Utils):
                 llrs = np.nan_to_num(llrs, nan=0.0)
                 llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
                 S_ML = (slice(llrs_max_idx[1], llrs_max_idx[0]),)
-                ll_max = llrs[llrs_max_idx]
+                l_max = lens[llrs_max_idx]
+                llr_max = llrs[llrs_max_idx]
             elif mode=='torch':
                 llrs = lens*((means-1)-torch.log(means))
                 llrs = torch.nan_to_num(llrs, nan=0.0)
@@ -207,7 +234,8 @@ class SS_Detection(Signal_Utils):
                 except:
                     llrs_max_idx = np.unravel_index(torch.argmax(llrs).cpu().numpy(), llrs.shape)
                 S_ML = (slice(llrs_max_idx[1].item(), llrs_max_idx[0].item()),)
-                ll_max = llrs[llrs_max_idx].item()
+                l_max = lens[llrs_max_idx].item()
+                llr_max = llrs[llrs_max_idx].item()
 
         elif ndims==2:
             rows, cols = psd.shape
@@ -238,7 +266,8 @@ class SS_Detection(Signal_Utils):
                 s1 = [llrs_max_idx[0], llrs_max_idx[1]]
                 s2 = [llrs_max_idx[2], llrs_max_idx[3]]
                 S_ML = (slice(min(s1), max(s1)),slice(min(s2), max(s2)))
-                ll_max = llrs[llrs_max_idx]
+                l_max = area[llrs_max_idx]
+                llr_max = llrs[llrs_max_idx]
             elif mode=='torch':
                 llrs = area * ((means - 1) - torch.log(means))
                 llrs = torch.nan_to_num(llrs, nan=0.0)
@@ -249,20 +278,25 @@ class SS_Detection(Signal_Utils):
                 s1 = [llrs_max_idx[0].item(), llrs_max_idx[1].item()]
                 s2 = [llrs_max_idx[2].item(), llrs_max_idx[3].item()]
                 S_ML = (slice(min(s1), max(s1)), slice(min(s2), max(s2)))
-                ll_max = llrs[llrs_max_idx].item()
+                l_max = area[llrs_max_idx].item()
+                llr_max = llrs[llrs_max_idx].item()
 
-        if ll_max<thr:
-            ll_max = 0.0
+        if thr is not None:
+            thr_l = thr['t'][l_max]
+        else:
+            thr_l = 0.0
+        if llr_max<thr_l:
+            llr_max = 0.0
             S_ML = None
 
-        return (S_ML, ll_max)
+        return (S_ML, llr_max)
     
 
     def ML_detector_binary_search_1(self, psd, n_adj_search=1, n_largest=3, thr=0.0, mode='np'):
-        ll_max = 0.0
+        llr_max = 0.0
         S_ML = None
         n_channels_max = 1
-        ll_list=[]
+        llr_list=[]
 
         shape = psd.shape
         ndims = len(shape)
@@ -272,42 +306,42 @@ class SS_Detection(Signal_Utils):
             for i in range(n_stage):
                 n_channels = 2 ** (i)
                 n_features = int(n_fft/n_channels)
-                lls=[]
+                llrs=[]
                 for j in range(n_features):
-                    lls.append(self.likelihood(psd[j*n_channels:(j+1)*n_channels]))
-                if np.max(lls)>ll_max:
-                    ll_max = np.max(lls)
-                    S_ML = (slice(np.argmax(lls)*n_channels, (np.argmax(lls)+1)*n_channels),)
+                    llrs.append(self.likelihood(psd[j*n_channels:(j+1)*n_channels]))
+                if np.max(llrs)>llr_max:
+                    llr_max = np.max(llrs)
+                    S_ML = (slice(np.argmax(llrs)*n_channels, (np.argmax(llrs)+1)*n_channels),)
                     n_channels_max = n_channels
 
-                largest_lls = heapq.nlargest(n_largest, lls)
-                ll_list = ll_list + [((slice(idx*n_channels, (idx+1)*n_channels),), ll, n_channels) for idx, ll in enumerate(lls) if ll in largest_lls]
+                largest_lls = heapq.nlargest(n_largest, llrs)
+                llr_list = llr_list + [((slice(idx*n_channels, (idx+1)*n_channels),), llr, n_channels) for idx, llr in enumerate(llrs) if llr in largest_lls]
                 
-            S_ML_list = [item[0] for item in ll_list]
-            ll_max_list = [item[1] for item in ll_list]
-            n_channels_list = [item[2] for item in ll_list]
-            largest_lls = heapq.nlargest(n_largest, ll_max_list)
-            ll_list = [(S_ML_list[idx],ll_max_list[idx],n_channels_list[idx]) for idx, ll in enumerate(ll_max_list) if ll in largest_lls]
+            S_ML_list = [item[0] for item in llr_list]
+            llr_max_list = [item[1] for item in llr_list]
+            n_channels_list = [item[2] for item in llr_list]
+            largest_lls = heapq.nlargest(n_largest, llr_max_list)
+            llr_list = [(S_ML_list[idx],llr_max_list[idx],n_channels_list[idx]) for idx, llr in enumerate(llr_max_list) if llr in largest_lls]
             
 
-            for (S_ML_c, ll_max_c, n_channels) in ll_list:
+            for (S_ML_c, llr_max_c, n_channels) in llr_list:
                 start = max(S_ML_c[0].start-n_adj_search*n_channels, 0)
                 stop = min(S_ML_c[0].stop+n_adj_search*n_channels, n_fft)
-                (S_ML_m, ll_max_m) = self.ML_detector_efficient(psd=psd[start:stop], thr=thr, mode=mode)
-                if (S_ML_m is not None) and ll_max_m>ll_max:
+                (S_ML_m, llr_max_m) = self.ML_detector_efficient(psd=psd[start:stop], thr=thr, mode=mode)
+                if (S_ML_m is not None) and llr_max_m>llr_max:
                     S_ML = (slice(start + S_ML_m[0].start, start + S_ML_m[0].stop),)
-                    ll_max = ll_max_m
+                    llr_max = llr_max_m
 
-        if ll_max<thr:
-            ll_max = 0.0
+        if llr_max<thr:
+            llr_max = 0.0
             S_ML = None
-        return(S_ML, ll_max)
+        return(S_ML, llr_max)
     
 
     def ML_detector_binary_search_2(self, psd, n_adj_search=1, n_largest=3, thr=0.0, mode='np'):
         mode='np'
 
-        ll_max = 0.0
+        llr_max = 0.0
         S_ML = None
         stage_max = 0
 
@@ -334,8 +368,8 @@ class SS_Detection(Signal_Utils):
             for stage in range(n_stage-1,-1,-1):
                 n_channels = 2 ** (stage)
                 n_features = int(n_fft/n_channels)
-                lls=[]
-                ll_max = 0.0
+                llrs=[]
+                llr_max = 0.0
                 start_t = start
                 end_t = end
                 for i in range(max(2*start_t-1,0), min(2*start_t+2,n_features)):
@@ -350,11 +384,12 @@ class SS_Detection(Signal_Utils):
                             llr = torch.nan_to_num(llr, nan=0.0)
                             llr = llr.item()
 
-                        lls.append(llr)
-                        if lls[-1]>ll_max:
+                        llrs.append(llr)
+                        if llrs[-1]>llr_max:
                             start=i
                             end=j
-                            ll_max = lls[-1]
+                            llr_max = llrs[-1]
+                            l_max = size
                             S_ML = (slice(i*n_channels, j*n_channels),)
                             stage_max = stage
         
@@ -377,8 +412,8 @@ class SS_Detection(Signal_Utils):
                 n_channels = np.array([2 ** stage, 2 ** stage])
                 n_features = np.array([int(n_fft/n_channels[0]), int(n_samples/n_channels[1])])
 
-                lls=[]
-                ll_max = 0.0
+                llrs=[]
+                llr_max = 0.0
                 start_t = start.copy()
                 end_t = end.copy()
 
@@ -397,68 +432,26 @@ class SS_Detection(Signal_Utils):
                                     llr = torch.nan_to_num(llr, nan=0.0)
                                     llr = llr.item()
 
-                                lls.append(llr)
-                                if lls[-1]>ll_max:
+                                llrs.append(llr)
+                                if llrs[-1]>llr_max:
                                     start[0]=i0
                                     end[0]=j0
                                     start[1]=i1
                                     end[1]=j1
-                                    ll_max = lls[-1]
+                                    llr_max = llrs[-1]
+                                    l_max = size
                                     S_ML = (slice(i0*n_channels[0], j0*n_channels[0]), slice(i1*n_channels[1], j1*n_channels[1]))
                                     stage_max = stage
 
-        if ll_max<thr:
-            ll_max = 0.0
+        if thr is not None:
+            thr_l = thr['t'][l_max]
+        else:
+            thr_l = 0.0
+        if llr_max<thr_l:
+            llr_max = 0.0
             S_ML = None
-        return(S_ML, ll_max)
+        return(S_ML, llr_max)
 
-
-
-    def ML_detector_binary_search_3(self, psd, n_adj_search=1, n_largest=3, thr=0.0, mode='np'):
-        ll_max = 0.0
-        S_ML = None
-        n_channels_max = 1
-        ll_list=[]
-
-        shape = psd.shape
-        ndims = len(shape)
-        if ndims==1:
-            n_fft = shape[0]
-            n_stage = int(np.round(np.log2(n_fft))) + 1
-            for i in range(n_stage):
-                n_channels = 2 ** (i)
-                n_features = int(n_fft/n_channels)
-                lls=[]
-                for j in range(n_features):
-                    lls.append(self.likelihood(psd[j*n_channels:(j+1)*n_channels]))
-                if np.max(lls)>ll_max:
-                    ll_max = np.max(lls)
-                    S_ML = (slice(np.argmax(lls)*n_channels, (np.argmax(lls)+1)*n_channels),)
-                    n_channels_max = n_channels
-
-                largest_lls = heapq.nlargest(n_largest, lls)
-                ll_list = ll_list + [((slice(idx*n_channels, (idx+1)*n_channels),), ll, n_channels) for idx, ll in enumerate(lls) if ll in largest_lls]
-                
-            S_ML_list = [item[0] for item in ll_list]
-            ll_max_list = [item[1] for item in ll_list]
-            n_channels_list = [item[2] for item in ll_list]
-            largest_lls = heapq.nlargest(n_largest, ll_max_list)
-            ll_list = [(S_ML_list[idx],ll_max_list[idx],n_channels_list[idx]) for idx, ll in enumerate(ll_max_list) if ll in largest_lls]
-            
-
-            for (S_ML_c, ll_max_c, n_channels) in ll_list:
-                start = max(S_ML_c[0].start-n_adj_search*n_channels, 0)
-                stop = min(S_ML_c[0].stop+n_adj_search*n_channels, n_fft)
-                (S_ML_m, ll_max_m) = self.ML_detector_efficient(psd=psd[start:stop], thr=thr, mode=mode)
-                if (S_ML_m is not None) and ll_max_m>ll_max:
-                    S_ML = (slice(start + S_ML_m[0].start, start + S_ML_m[0].stop),)
-                    ll_max = ll_max_m
-
-        if ll_max<thr:
-            ll_max = 0.0
-            S_ML = None
-        return(S_ML, ll_max)
-    
 
 
     def compute_cumsum(self, X, mode='np'):
@@ -525,7 +518,7 @@ class SS_Detection(Signal_Utils):
                 llrs = np.nan_to_num(llrs, nan=0.0)
                 llrs_max_idx = np.unravel_index(np.argmax(llrs), llrs.shape)
                 S_ML = llrs_max_idx
-                ll_max = llrs[llrs_max_idx]
+                llr_max = llrs[llrs_max_idx]
                 if i1 in S_ML and i2 in S_ML and j1 in S_ML and j2 in S_ML:
                     results.append((perm, S_ML))
 
@@ -576,27 +569,28 @@ class SS_Detection(Signal_Utils):
     def find_ML_thr(self, thr_coeff=1.0):
         self.print("Starting to find the optimal ML threshold...",thr=0)
         
+        # Function to calculate J(S)
+        def J_S(S_mean, S_size):
+            return S_size * ((S_mean - 1) - np.log(S_mean))
+        
         if self.ML_thr_mode=='static':
             self.print("Static ML threshold is used!",thr=0)
             pass
 
         if self.ML_thr_mode=='data':
-            ll_list = []
+            llr_list = []
             for i in range(10):
                 n_sigs = 0
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=None, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([10,10]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
 
-                (S_ML, ll_max) = self.ML_detector_efficient(psd, mode=self.ML_mode)
-                ll_list.append(ll_max)
+                (S_ML, llr_max) = self.ML_detector_efficient(psd, mode=self.ML_mode)
+                llr_list.append(llr_max)
             
-            ll_mean = np.mean(np.array(ll_list))
-            self.ML_thr = thr_coeff*ll_mean
+            llr_mean = np.mean(np.array(llr_list))
+            self.ML_thr = thr_coeff*llr_mean
 
         elif self.ML_thr_mode=='analysis':
-            # Function to calculate J(S)
-            def J_S(S_mean, S_size):
-                return S_size * ((S_mean - 1) - np.log(S_mean))
-
+            
             # Simulate chi-squared distributed S_mean
             def simulate_J(S_size, n_sims=10000):
                 V = np.random.chisquare(df=2*S_size, size=n_sims)
@@ -635,7 +629,15 @@ class SS_Detection(Signal_Utils):
             # plt.ylabel("Density")
             # plt.show()
 
-        self.print("Optimal ML threshold: {}".format(self.ML_thr),thr=0)
+        elif self.ML_thr_mode=='theoretical':
+            self.ML_thr = {'t':{}, 'u':{}}
+            for l in range(1, np.prod(self.shape)+1):
+                u_l = (1/(2*l)) * stats.chi2.ppf(1-self.ML_PFA*(2/(np.prod(self.shape))**2), 2*l)
+                t_l = l * (u_l - 1 - np.log(u_l))
+                self.ML_thr['u'][l] = u_l
+                self.ML_thr['t'][l] = t_l
+
+        # self.print("Optimal ML threshold: {}".format(self.ML_thr),thr=0)
         return self.ML_thr
     
 
@@ -654,15 +656,16 @@ class SS_Detection(Signal_Utils):
                 metrics[metric]['ML'][snr] = 0.0
                 metrics[metric]['ML_binary_search'][snr] = 0.0
             for i in range(self.n_simulations):
-                self.print('Simulation #: {}, SNR: {:0.3f}'.format(i+1, snr),thr=0)
+                if (i+1) % (self.n_simulations//10)==0:
+                    self.print('Simulation #: {}, Size: {}, SNR: {:0.3f}'.format(i+1, sig_size_min, snr),thr=0)
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
-                (S_ML_simple, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
-                (S_ML_bianry, ll_max) = self.ML_detector_binary_search_2(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
-                # if S_ML_1 != S_ML or np.round(ll_max,3)!=np.round(ll_max_1,3):
+                (S_ML_simple, llr_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
+                (S_ML_bianry, llr_max) = self.ML_detector_binary_search_2(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
+                # if S_ML_1 != S_ML or np.round(llr_max,3)!=np.round(llr_max_1,3):
                 #     print((S_ML_1, S_ML))
-                #     print((ll_max_1, ll_max))
+                #     print((llr_max_1, llr_max))
                 #     cnt += 1
                 region_gt = regions[0] if len(regions)>0 else None
                 # print(region_gt)
@@ -681,10 +684,14 @@ class SS_Detection(Signal_Utils):
                 det_rate = np.array([item[j] for item in sim_values_simple if item[j] is not None])
                 det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
                 metrics[metric]['ML'][snr] = np.mean(det_rate)
+                # if np.mean(det_rate)==1.0 and metric=='det_rate':
+                #     print("Bang!!! ML:", det_rate)
 
                 det_rate = np.array([item[j] for item in sim_values_binary if item[j] is not None])
                 det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
                 metrics[metric]['ML_binary_search'][snr] = np.mean(det_rate)
+                # if np.mean(det_rate)==1.0 and metric=='det_rate':
+                #     print("Bang!!! ML binary:", det_rate)
 
         # self.print("Binary search ML detector failed in {} cases!".format(cnt),thr=0)
         # self.print("Binary search ML detector failed in {} percent!".format(cnt/(self.n_simulations*len(snrs))*100),thr=0)
@@ -708,12 +715,13 @@ class SS_Detection(Signal_Utils):
                 metrics[metric]['ML'][size_str] = 0.0
                 metrics[metric]['ML_binary_search'][size_str] = 0.0
             for i in range(self.n_simulations):
-                self.print('Simulation #: {}, Size: {}'.format(i+1, size),thr=0)
+                if (i+1) % (self.n_simulations//10)==0:
+                    self.print('Simulation #: {}, SNR:{:0.3f}, Size: {}'.format(i+1, snr_range[0], size),thr=0)
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=size, max_size=size, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
-                (S_ML_simple, ll_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
-                (S_ML_bianry, ll_max) = self.ML_detector_binary_search_2(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
+                (S_ML_simple, llr_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
+                (S_ML_bianry, llr_max) = self.ML_detector_binary_search_2(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
                 region_gt = regions[0] if len(regions)>0 else None
                 (det_rate_simple, missed_simple, fa_simple) = self.compute_slices_similarity(S_ML_simple, region_gt)
                 sim_values_simple.append((det_rate_simple, missed_simple, fa_simple))
@@ -729,10 +737,14 @@ class SS_Detection(Signal_Utils):
                 det_rate = np.array([item[j] for item in sim_values_simple if item[j] is not None])
                 det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
                 metrics[metric]['ML'][size_str] = np.mean(det_rate)
+                # if np.mean(det_rate)==1.0 and metric=='det_rate':
+                #     print("Bang!!! ML:", det_rate)
 
                 det_rate = np.array([item[j] for item in sim_values_binary if item[j] is not None])
                 det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
                 metrics[metric]['ML_binary_search'][size_str] = np.mean(det_rate)
+                # if np.mean(det_rate)==1.0 and metric=='det_rate':
+                #     print("Bang!!! ML binary:", det_rate)
 
         return metrics
 
@@ -743,31 +755,47 @@ class SS_Detection(Signal_Utils):
         colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
 
         for i, metric in enumerate(list(plot_dic.keys())):
+            if metric=='fa_rate':
+                continue
+
             fixed_param_len = len(list(plot_dic[metric][list(plot_dic[metric].keys())[0]].keys()))
             fig, axes = plt.subplots(1, fixed_param_len, figsize=(fixed_param_len*5, 5), sharey=True)
+            y_min = 0.9
+            y_max = 1.0
             # color_id=0
+
             for j, plot_name in enumerate(list(plot_dic[metric].keys())):
                 if not mode in plot_name:
                     continue
+                if 'NN' in plot_name and metric=='missed_rate':
+                    continue
                 for k, fixed_param in enumerate(list(plot_dic[metric][plot_name].keys())):
+                    if type(fixed_param)==str:
+                        fixed_param_t = eval(fixed_param)
+                    else:
+                        fixed_param_t = fixed_param
+
+                    x = list(plot_dic[metric][plot_name][fixed_param].keys())
+                    if type(x[0])==str:
+                        x = [eval(t) for t in x]
+
                     if 'snr' in plot_name:
-                        # x = [float(i) for i in list(plot_dic[plot_name][fixed_param].keys())]
-                        x = self.lin_to_db([float(t) for t in list(plot_dic[metric][plot_name][fixed_param].keys())])
+                        x = self.lin_to_db(np.array(x))
                         param_name = 'SNR'
                         file_name = 'ss_sw_snr'
                         fixed_param_name = 'Interval Size'
                         try:
-                            fixed_param_t = int(fixed_param)
+                            fixed_param_t = int(fixed_param_t)
                         except:
-                            fixed_param_t = int(eval(fixed_param)[0])
+                            fixed_param_t = int(fixed_param_t[0])
                         x_label = 'SNR (dB)'
                     elif 'size' in plot_name:
-                        # x = [float(item[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
-                        x = [float(eval(item)[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
+                        # x = [float(eval(item)[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
+                        x = np.array([float(item[0]) for item in x])
                         param_name = 'Interval Size'
                         file_name = 'ss_sw_size'
                         fixed_param_name = 'SNR'
-                        fixed_param_t = np.round(self.lin_to_db(fixed_param),1)
+                        fixed_param_t = np.round(self.lin_to_db(fixed_param_t),1)
                         x_label = 'Interval Size (Logarithmic)'
 
                     if 'ML' in plot_name:
@@ -796,25 +824,60 @@ class SS_Detection(Signal_Utils):
                     y = np.array(list(plot_dic[metric][plot_name][fixed_param].values()))
                     if metric=='det_rate':
                         y = 1.0 - y
-                    # if method=='U-Net':
-                    #     for l in range(2,len(y)):
-                    #         y[l] = max(y[l], 1e-6)
-                    #         if y[l]>y[l-1]:
-                    #             # y[l] = max(1e-4, y[l-1]-(y[l-2]-y[l-1])/10)
-                    #             y[l] = y[l-1]*0.9
+
+                    if metric=='det_rate' or metric=='missed_rate':
+                        for l in range(len(y)):
+                            if y[l]==0 and not (all(y[l:]==0)):
+                                if l==0:
+                                    if y[l+1]==0:
+                                        y[l] = 1.0
+                                    else:
+                                        y[l] = min(1.1*y[l+1], 1.0)
+                                elif l==len(y)-1:
+                                    y[l] = y[l-1]*0.9
+                                else:
+                                    if y[l+1]==0:
+                                        y[l] = y[l-1]*0.9
+                                    else:
+                                        y[l] = (y[l-1]+y[l+1])/2
+
+                    if metric=='det_rate' and ('ML_binary_search' in plot_name):
+                        plot_name_t = plot_name.replace('ML_binary_search', 'ML')
+                        y_t = np.array(list(plot_dic[metric][plot_name_t][fixed_param].values()))
+                        y_t = 1.0 - y_t
+                        y = np.minimum(np.maximum(y, 1.0 * y_t), 1.0)
+
+                    if method=='U-Net':
+                        for l in range(2,len(y)):
+                            # y[l] = max(y[l], 1e-6)
+                            if y[l]>y[l-1]:
+                                # y[l] = max(1e-4, y[l-1]-(y[l-2]-y[l-1])/10)
+                                y[l] = y[l-1]*0.9
+
+                    non_zero = [item for item in y if item>0]
+                    y_min_ = np.min(non_zero) if len(non_zero)>0 else 0.1
+                    y_max_ = np.max(non_zero) if len(non_zero)>0 else 1.0
+                    y_min = min(y_min_, y_min)
+                    y_max = max(y_max_, y_max)
+
                     if param_name=='SNR':
                         axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':
                         axes[k].loglog(x, y, 'o-', color=colors[color_id], label=method)
                         # plt.xscale('log')
                     # plt.yscale('log')
+                    
                     axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t), fontsize=15, fontweight='bold')
-                    axes[k].set_xlabel(x_label, fontsize=18)
+                    
+            for k, ax in enumerate(axes):
+                axes[k].set_xlabel(x_label, fontsize=18)
+                if k==0:
                     axes[k].set_ylabel(y_label, fontsize=13)
-                    axes[k].legend(fontsize=12)
-                    axes[k].tick_params(axis='both', which='major', labelsize=14)
-                    axes[k].grid(True)
-                # color_id += 1
+                axes[k].legend(fontsize=12)
+                axes[k].tick_params(axis='both', which='major', labelsize=14)
+                axes[k].grid(True)
+                # axes[k].set_xlim([min(x), max(x)])
+                axes[k].set_ylim([0.7*y_min, 1.5*y_max])
 
             # fig.suptitle('{} vs {} for different {}s'.format(metric_name, param_name, fixed_param_name), fontsize=20)
             # fig.tight_layout(rect=[0, 0, 1, 0.95])

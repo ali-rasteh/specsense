@@ -49,8 +49,8 @@ class Params_Class(object):
         self.sw_n_sigs_p_dist=None
         # self.sw_n_sigs_p_dist=[0.1,0.9]
         
-        self.sweep_snr=['ml', 'nn']     # nn and ml
-        self.sweep_size=['ml', 'nn']    # nn and ml
+        self.sweep_snr=['', '']     # nn and ml
+        self.sweep_size=['', '']    # nn and ml
         if self.ndim==1:
             self.n_simulations=1000
         elif self.ndim==2:
@@ -107,7 +107,7 @@ class Params_Class(object):
         self.ML_thr_coeff=1.9
         self.ML_thr=self.ML_thr_coeff*10.0*self.noise_power
         self.ML_PFA=1e-6
-        self.ML_thr_mode='static'    # analysis or data or static
+        self.ML_thr_mode='theoretical'    # analysis or data or static or theoretical
         self.eval_smooth=1e-6
         self.train_ratio=0.8
         self.val_ratio=0.0
@@ -181,13 +181,13 @@ if __name__ == '__main__':
     ss_det = SS_Detection(params)
     params.random_str = ss_det.gen_random_str()
     ss_det.print_info(params)
-    ss_det.plot_MD_vs_SNR(mode=1)
-    ss_det.plot_MD_vs_SNR(mode=2)
-    ss_det.plot_MD_vs_SNR(mode=3)
+    # ss_det.plot_MD_vs_SNR(mode=1)
+    # ss_det.plot_MD_vs_SNR(mode=2)
+    # ss_det.plot_MD_vs_SNR(mode=3)
     ss_det.plot_MD_vs_SNR(mode=4)
-    ss_det.plot_MD_vs_DoF(mode=1)
-    ss_det.plot_MD_vs_DoF(mode=2)
-    ss_det.plot_MD_vs_DoF(mode=3)
+    # ss_det.plot_MD_vs_DoF(mode=1)
+    # ss_det.plot_MD_vs_DoF(mode=2)
+    # ss_det.plot_MD_vs_DoF(mode=3)
     ss_det.plot_MD_vs_DoF(mode=4)
     raise SystemExit
 
@@ -303,7 +303,10 @@ if __name__ == '__main__':
     
     ss_det.print("metrics: {}".format(metrics), thr=0)
     ss_det.save_dict_to_json(metrics, os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'metrics_1d_2.json'))
+    
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))
+    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S.json'))
 
     if params.sweep_snr:
         ss_det.plot(plot_dic=metrics, mode='snr')

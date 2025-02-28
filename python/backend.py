@@ -89,7 +89,8 @@ if import_numpy or import_cupy:
 
 if import_scipy or import_cupyx:
     constants = be_scp.constants
-    chi2 = be_scp.stats.chi2
+    # chi2 = be_scp.stats.chi2
+    stats = be_scp.stats
 
     firwin = be_scp_sig.firwin
     lfilter = be_scp_sig.lfilter
