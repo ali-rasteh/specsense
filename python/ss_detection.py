@@ -683,6 +683,9 @@ class SS_Detection(Signal_Utils):
                     default_val = 1.0
                 det_rate = np.array([item[j] for item in sim_values_simple if item[j] is not None])
                 det_rate = det_rate if len(det_rate)>0 else np.array([default_val])
+                # if metric=='det_rate':
+                #     print(len(det_rate))
+                #     print(det_rate)
                 metrics[metric]['ML'][snr] = np.mean(det_rate)
                 # if np.mean(det_rate)==1.0 and metric=='det_rate':
                 #     print("Bang!!! ML:", det_rate)
@@ -762,7 +765,6 @@ class SS_Detection(Signal_Utils):
             fig, axes = plt.subplots(1, fixed_param_len, figsize=(fixed_param_len*5, 5), sharey=True)
             y_min = 0.9
             y_max = 1.0
-            # color_id=0
 
             for j, plot_name in enumerate(list(plot_dic[metric].keys())):
                 if not mode in plot_name:
@@ -841,11 +843,11 @@ class SS_Detection(Signal_Utils):
                                     else:
                                         y[l] = (y[l-1]+y[l+1])/2
 
-                    if metric=='det_rate' and ('ML_binary_search' in plot_name):
-                        plot_name_t = plot_name.replace('ML_binary_search', 'ML')
-                        y_t = np.array(list(plot_dic[metric][plot_name_t][fixed_param].values()))
-                        y_t = 1.0 - y_t
-                        y = np.minimum(np.maximum(y, 1.0 * y_t), 1.0)
+                    # if metric=='det_rate' and ('ML_binary_search' in plot_name):
+                    #     plot_name_t = plot_name.replace('ML_binary_search', 'ML')
+                    #     y_t = np.array(list(plot_dic[metric][plot_name_t][fixed_param].values()))
+                    #     y_t = 1.0 - y_t
+                    #     y = np.minimum(np.maximum(y, 1.0 * y_t), 1.0)
 
                     if method=='U-Net':
                         for l in range(2,len(y)):
@@ -864,8 +866,6 @@ class SS_Detection(Signal_Utils):
                         axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':
                         axes[k].loglog(x, y, 'o-', color=colors[color_id], label=method)
-                        # plt.xscale('log')
-                    # plt.yscale('log')
                     
                     axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t), fontsize=15, fontweight='bold')
                     

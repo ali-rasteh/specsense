@@ -10,13 +10,21 @@ import_torch=True
 
 class Params_Class(object):
     def __init__(self):
-        self.ndim=2
+        self.ndim=1
+        self.sweep_snr=['', '']     # nn and ml
+        self.sweep_size=['', '']    # nn and ml
+        if self.ndim==1:
+            self.n_simulations=1000
+        elif self.ndim==2:
+            self.n_simulations=100
+        self.sweep_steps=20
         
         if self.ndim==1:
             self.n_fft=1024
+            self.n_samples=1024
         elif self.ndim==2:
             self.n_fft=128
-        self.n_samples=128
+            self.n_samples=128
 
         if self.ndim==1:
             self.shape=(self.n_fft,)
@@ -49,15 +57,6 @@ class Params_Class(object):
         self.sw_n_sigs_p_dist=None
         # self.sw_n_sigs_p_dist=[0.1,0.9]
         
-        self.sweep_snr=['', '']     # nn and ml
-        self.sweep_size=['', '']    # nn and ml
-        if self.ndim==1:
-            self.n_simulations=1000
-        elif self.ndim==2:
-            self.n_simulations=100
-        self.sweep_steps=20
-        self.n_adj_search=1
-        self.n_largest=3
 
         if self.ndim==1:
             self.n_dataset=200000
@@ -122,6 +121,8 @@ class Params_Class(object):
         self.hist_thr=10.0
         self.hist_bins=40
         self.test_n_dataset=self.n_dataset//20
+        self.n_adj_search=1
+        self.n_largest=3
         self.random_str=None
         self.use_cupy=False
         self.use_torch=True
@@ -184,12 +185,12 @@ if __name__ == '__main__':
     # ss_det.plot_MD_vs_SNR(mode=1)
     # ss_det.plot_MD_vs_SNR(mode=2)
     # ss_det.plot_MD_vs_SNR(mode=3)
-    ss_det.plot_MD_vs_SNR(mode=4)
+    # ss_det.plot_MD_vs_SNR(mode=4)
     # ss_det.plot_MD_vs_DoF(mode=1)
     # ss_det.plot_MD_vs_DoF(mode=2)
     # ss_det.plot_MD_vs_DoF(mode=3)
     ss_det.plot_MD_vs_DoF(mode=4)
-    raise SystemExit
+    # raise SystemExit
 
     if params.generate_dataset:
         if params.train:
@@ -305,8 +306,12 @@ if __name__ == '__main__':
     ss_det.save_dict_to_json(metrics, os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
     
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))
-    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S.json'))
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))      # 1D with IoU only on detected signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX_alt.json'))  # Alternative 1D with IoU only on detected signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S.json'))      # 2D with IoU only on detected signals
+    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S_alt.json'))  # Alternative 2D with IoU only on detected signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_GVCz44.json'))      # 1D with IoU on all signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_rapHb5.json'))      # 2D with IoU on all signals
 
     if params.sweep_snr:
         ss_det.plot(plot_dic=metrics, mode='snr')
