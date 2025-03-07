@@ -866,7 +866,14 @@ class SS_Detection(Signal_Utils):
                         axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
                     elif param_name=='Interval Size':
                         axes[k].loglog(x, y, 'o-', color=colors[color_id], label=method)
-                    
+
+                    if all(y==0):
+                        # axes[k].get_shared_y_axes().remove(axes[k])
+                        axes[k].text(0.5, 0.5, 'All values are Zero', horizontalalignment='center', verticalalignment='center', transform=axes[k].transAxes, fontsize=16, fontweight='bold')
+                    else:
+                        # axes[k].sharey(axes[0])
+                        pass
+
                     axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t), fontsize=15, fontweight='bold')
                     
             for k, ax in enumerate(axes):
