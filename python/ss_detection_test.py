@@ -70,7 +70,8 @@ class Params_Class(object):
         self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
         self.train=False
-        self.test=True
+        self.test=False
+        self.count_flop=False
         self.n_epochs_tot=50
         self.n_epochs_seg=50
         self.lr=1e-2
@@ -190,6 +191,7 @@ if __name__ == '__main__':
     # ss_det.plot_MD_vs_DoF(mode=2)
     # ss_det.plot_MD_vs_DoF(mode=3)
     ss_det.plot_MD_vs_DoF(mode=4)
+    ss_det.plot_signals()
     # raise SystemExit
 
     if params.generate_dataset:
@@ -302,8 +304,10 @@ if __name__ == '__main__':
                 metrics[metric]['size_ML_binary_search'][snr] = sweep_metrics[metric]['ML_binary_search'].copy()
 
     
-    ss_det.print("metrics: {}".format(metrics), thr=0)
-    ss_det.save_dict_to_json(metrics, os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
+    metrics_saved = [x!='' for x in params.sweep_snr] + [x!='' for x in params.sweep_size]
+    if any(metrics_saved):
+        ss_det.print("metrics: {}".format(metrics), thr=0)
+        ss_det.save_dict_to_json(metrics, os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
     
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))      # 1D with IoU only on detected signals

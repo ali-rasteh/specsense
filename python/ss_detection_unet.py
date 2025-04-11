@@ -563,6 +563,7 @@ class SS_Detection_Unet(Signal_Utils):
         self.model_load_dir = params.model_load_dir
         self.model_name = params.model_name
         self.model_seg_name = params.model_seg_name
+        self.count_flop = params.count_flop
         self.time_format = "%H:%M:%S"
         self.times = [datetime.datetime.now()]
 
@@ -615,7 +616,8 @@ class SS_Detection_Unet(Signal_Utils):
         else:
             self.model = None
 
-        self.print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)),thr=0)
+        self.print('Total Number of parameters in the model: {}'.format(self.count_parameters(self.model)[0]),thr=0)
+        self.print('Total Number of trainable parameters in the model: {}'.format(self.count_parameters(self.model)[1]),thr=0)
         
         if self.model_seg is not None:
             self.model_seg.to(self.device)
@@ -628,16 +630,20 @@ class SS_Detection_Unet(Signal_Utils):
 
     def load_model(self):
         if 'model' in self.load_model_params:
-            self.model.load_state_dict(torch.load(self.model_load_dir+self.model_name))
-            # self.model = torch.load(self.model_load_dir+self.model_name)
+            self.model.load_state_dict(torch.load(self.model_load_dir+self.model_name, map_location=self.device))
+            # self.model = torch.load(self.model_load_dir+self.model_name, map_location=self.device)
             self.print("Loaded Neural network model for the whole network.",thr=0)
         if 'seg' in self.load_model_params:
-            self.model_seg.load_state_dict(torch.load(self.model_load_dir+self.model_seg_name))
+            self.model_seg.load_state_dict(torch.load(self.model_load_dir+self.model_seg_name, map_location=self.device))
             self.print("Loaded Neural network model for the U-net.",thr=0)
         
 
     def count_parameters(self, model=None):
-        return sum(p.numel() for p in model.parameters())
+        print(p for p in model.parameters())
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+        return total_params, trainable_params
 
 
     def load_optimizer(self):
@@ -978,7 +984,7 @@ class SS_Detection_Unet(Signal_Utils):
         return dice.mean().item()
 
 
-    def evaluate_model(self, model, data_loader, mode='segmentation'):
+    def evaluate_model(self, model, data_loader, mode='segmentation', count_flop=False):
         model.eval()
 
         det_rate = 0
@@ -990,6 +996,7 @@ class SS_Detection_Unet(Signal_Utils):
         mask_energy = 0
 
         self.print("Dataloader length: {}".format(len(data_loader)),thr=0)
+        flop_counted = False
         with torch.no_grad():
             for data, gt in data_loader:
                 data = data.to(self.device)
@@ -1002,6 +1009,15 @@ class SS_Detection_Unet(Signal_Utils):
                     else:
                         gt = gt[1:]
                 output = model(data)
+                if count_flop and not flop_counted:
+                    self.print("Counting FLOPs...", thr=0)
+                    flops = FlopCountAnalysis(model, data[0:1])
+                    self.print(f"Total FLOPs: {flops.total() / 2 / 1e9:.2f} GFLOPs", thr=0)
+                    # self.print(f"Per-module breakdown:", thr=3)
+                    # self.print(flops.by_module(), thr=3)
+                    flop_counted = True
+                else:
+                    flops = None
                 if len(output)==1:
                     output = output[0]
                 if mode=='detection_contours':
@@ -1182,14 +1198,14 @@ class SS_Detection_Unet(Signal_Utils):
 
             self.times.append(datetime.datetime.now())
             if mode=='both' or mode=='train':
-                (det_rate, missed, false_alarm) = self.evaluate_model(self.model, self.train_loader, mode=eval_mode)
+                (det_rate, missed, false_alarm) = self.evaluate_model(self.model, self.train_loader, mode=eval_mode, count_flop=self.count_flop)
                 self.train_acc = det_rate
                 self.train_det_rate = det_rate
                 self.train_missed_rate = missed
                 self.train_fa_rate = false_alarm
                 self.print('Accuracy on train data: {}'.format(self.train_acc),thr=0)
             if mode=='both' or mode=='test':
-                (det_rate, missed, false_alarm) = self.evaluate_model(self.model, self.test_loader, mode=eval_mode)
+                (det_rate, missed, false_alarm) = self.evaluate_model(self.model, self.test_loader, mode=eval_mode, count_flop=self.count_flop)
                 self.test_acc = det_rate
                 self.test_det_rate = det_rate
                 self.test_missed_rate = missed

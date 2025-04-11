@@ -144,6 +144,66 @@ class SS_Detection(Signal_Utils):
             plt.show()
 
 
+    def plot_signals(self):
+        n_sigs = 1
+        snr = 10
+        self.shape = tuple([1024 for _ in range(len(self.shape))])
+
+        if len(self.shape)==1:
+            sig_size_freq = 300
+            sig_start_freq = 312
+        elif len(self.shape)==2:
+            sig_size_freq = 200
+            sig_start_freq = 412
+            sig_size_time = 400
+            sig_start_time = 380
+
+        sig_size_min = tuple([sig_size_freq for _ in range(len(self.shape))])
+        sig_size_max = sig_size_min
+
+        regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
+        # print(regions)
+        if len(self.shape)==1:
+            regions = [(slice(sig_start_freq, sig_start_freq+sig_size_freq, None),)]
+        elif len(self.shape)==2:
+            regions = [(slice(sig_start_time, sig_start_time+sig_size_time, None), slice(sig_start_freq, sig_start_freq+sig_size_freq, None))]
+        (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
+        psd = self.lin_to_db(psd, mode='pow')
+
+        plt.figure(figsize=(8, 6))
+        label_size = 19
+        ticks_size = 16
+        title_size = 22
+        legend_size = 18
+        if len(self.shape)==1:
+            plt.plot(psd, label='PSD')
+            mask *= snr
+            plt.plot(mask, label='Mask', color='red', linewidth=4)
+            plt.ylim(bottom=-2, top=np.max(psd)+1)
+            plt.xlabel('Frequency Bins', fontsize=label_size)
+            plt.ylabel('Power Spectral Density (dB)', fontsize=label_size)
+            plt.legend(fontsize=legend_size)
+            plt.title('Power Spectral Density of signal in 1D', fontsize=title_size, fontweight='bold', pad=20)
+        elif len(self.shape)==2:
+            plt.imshow(psd, aspect='auto', origin='lower', cmap='viridis')
+            cbar = plt.colorbar()
+            contours = measure.find_contours(mask, level=0.5)
+            for contour in contours:
+                plt.plot(contour[:, 1], contour[:, 0], linewidth=4, color='red')
+            cbar.ax.set_ylabel('Power Spectral Density (dB)', fontsize=label_size)
+            cbar.ax.tick_params(labelsize=ticks_size)
+            plt.clim(-2, snr+5)
+            plt.xlabel('Frequency Bins', fontsize=label_size)
+            plt.ylabel('Time Bins', fontsize=label_size)
+            plt.title('Power Spectral Density of signal in 2D', fontsize=title_size, fontweight='bold', pad=20)
+
+        plt.tick_params(axis='both', which='major', labelsize=ticks_size)
+        plt.tight_layout()
+        plt.savefig(self.figs_dir + 'psd.pdf', format='pdf')
+        plt.show()
+
+
+
     def likelihood(self, S):
         if S is None:
             llr = 0.0
@@ -797,12 +857,13 @@ class SS_Detection(Signal_Utils):
                         param_name = 'Interval Size'
                         file_name = 'ss_sw_size'
                         fixed_param_name = 'SNR'
-                        fixed_param_t = np.round(self.lin_to_db(fixed_param_t),1)
+                        # fixed_param_t = np.round(self.lin_to_db(fixed_param_t),1)
+                        fixed_param_t = fixed_param_t
                         x_label = 'Interval Size (Logarithmic)'
 
                     if 'ML' in plot_name:
                         if 'binary' in plot_name:
-                            method = 'Efficient ML'
+                            method = 'Binary Search'
                             color_id = 0
                         else:
                             method = 'Exhaustive ML'
@@ -874,14 +935,14 @@ class SS_Detection(Signal_Utils):
                         # axes[k].sharey(axes[0])
                         pass
 
-                    axes[k].set_title('{} = {:0.1f}'.format(fixed_param_name, fixed_param_t), fontsize=15, fontweight='bold')
+                    axes[k].set_title('{} = {}'.format(fixed_param_name, fixed_param_t), fontsize=22, fontweight='bold')
                     
             for k, ax in enumerate(axes):
                 axes[k].set_xlabel(x_label, fontsize=18)
                 if k==0:
-                    axes[k].set_ylabel(y_label, fontsize=13)
-                axes[k].legend(fontsize=12)
-                axes[k].tick_params(axis='both', which='major', labelsize=14)
+                    axes[k].set_ylabel(y_label, fontsize=14)
+                axes[k].legend(fontsize=16)
+                axes[k].tick_params(axis='both', which='major', labelsize=16)
                 axes[k].grid(True)
                 # axes[k].set_xlim([min(x), max(x)])
                 axes[k].set_ylim([0.7*y_min, 1.5*y_max])

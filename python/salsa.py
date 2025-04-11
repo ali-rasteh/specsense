@@ -34,15 +34,33 @@ class SALSA_Comp(General):
         
         self.fs = getattr(self.params, 'fs', 983.04e6)
         self.n_cc = getattr(self.params, 'n_cc', 4)
-        self.fs_per_cc = getattr(self.params, 'fs_per_cc', 122.88e6)
+        self.fcc = getattr(self.params, 'fcc', 122.88e6)
         self.n_rx = getattr(self.params, 'n_rx', 32)
         self.n_tx = getattr(self.params, 'n_tx', 32)
         self.l_filt = getattr(self.params, 'l_filt', 32)
+        self.l_match_filt = getattr(self.params, 'l_match_filt', 32)
         self.n_filt_stages = getattr(self.params, 'n_filt_stages', 3)
         self.us_rate = getattr(self.params, 'us_rate', 2)
         self.ds_rate = getattr(self.params, 'ds_rate', 2)
         self.n_fft = getattr(self.params, 'n_fft', 1024)
+        self.n_sym_sf = getattr(self.params, 'n_sym_sf', 14)
+        self.t_sf = getattr(self.params, 't_sf', 125e-6)
+        self.n_sc_rb = getattr(self.params, 'n_sc_rb', 12)
+        self.n_rb = getattr(self.params, 'n_rb', 69)
         self.n_sc = getattr(self.params, 'n_sc', 828)
+        self.n_rs_rb = getattr(self.params, 'n_rs_rb', 4)
+
+        self.ov_samp_rate = getattr(self.params, 'ov_samp_rate', self.fs / (self.fcc * self.n_cc))
+        self.t_cc = getattr(self.params, 't_cc', 1 / self.fcc)
+        self.f_sc = getattr(self.params, 'f_sc', self.fcc / self.n_fft)
+        self.used_bw = getattr(self.params, 'used_bw', self.n_sc * self.f_sc)
+        self.t_sym_total = getattr(self.params, 't_sym_total', self.t_sf / self.n_sym_sf)
+        self.t_sym = getattr(self.params, 't_sym', 1/self.f_sc)
+        self.t_cp = getattr(self.params, 't_cp', self.t_sym_total - self.t_sym)
+        self.n_sym_per_sec = getattr(self.params, 'n_sym_per_sec', 1/self.t_sf * self.n_sym_sf)
+        self.n_sym_total = getattr(self.params, 'n_sym_total', self.t_sym_total / self.t_cc)
+        self.n_cp = getattr(self.params, 'n_cp', self.t_cp / self.t_sym * self.n_fft)
+        self.n_rs = getattr(self.params, 'n_rs', self.n_rb * self.n_rs_rb)
 
 
         # Size of each data type in bytes
@@ -681,6 +699,24 @@ class SALSA_Comp(General):
         return n_ops, msg_in_size, msg_out_size
 
 
+
+
+
+class SALSA_Comp_5G(SALSA_Comp):
+    """
+    Class for the SALSA algorithms computational complexity for 5G.
+    """
+    def __init__(self, params):
+        """
+        Initialize the SALSA_Comp_5G class.
+
+        Args:
+            params: Parameters for the SALSA algorithm.
+        """
+        super().__init__(params)
+
+
+
     def nco(self):
         """
         Computes the processing parameters for a NCO operation.
@@ -710,6 +746,21 @@ class SALSA_Comp(General):
 
 
     def filtering_to_cc(self, mode='rx'):
+        """
+        Computes the processing parameters for the filtering to CC operation.
+        Parameters
+        ----------
+        mode : str
+            Mode of the operation ('rx' or 'tx')
+        Returns
+        -------
+        n_ops : int
+            Number of operations
+        msg_in_size : int
+            Size of the input message
+        msg_out_size : int
+            Size of the output message
+        """
         
         n_ops = 0
         msg_in_size = 0
@@ -721,8 +772,11 @@ class SALSA_Comp(General):
         msg_in_size += msg_in_size_
         msg_out_size += msg_out_size_
 
+        # Padding the input data to take into account the continuous nature of the data
+        # and the filter length
+        blk_size_ = self.n_fft + self.l_filt - 1
         n_ops_, msg_in_size_, msg_out_size_ = \
-            self.fir_downsamp(blksize=self.n_fft, nstage=self.n_filt_stages, nchan=self.n_cc,
+            self.fir_downsamp(blksize=blk_size_, nstage=self.n_filt_stages, nchan=self.n_cc,
                               ntaps=self.l_filt, dtype_weight=DataTypes.complexfp16, dtype_data=DataTypes.complexfp16)
         n_ops += n_ops_
         msg_in_size += msg_in_size_
@@ -751,7 +805,6 @@ class SALSA_Comp(General):
             Size of the output message
         """
         
-
         # Compute the processing parameters for the OFDM processing
         if mode == 'rx':
             n_ops, msg_in_size, msg_out_size = \
@@ -767,9 +820,58 @@ class SALSA_Comp(General):
     
 
 
-    # def rs_data_demux(self):
+    def rs_data_demux(self):
+        """
+        Computes the processing parameters for the RS data demux operation.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        n_ops : int
+            Number of operations
+        msg_in_size : int
+            Size of the input message
+        msg_out_size : int
+            Size of the output message
+        """
+        
+        n_ops = 5 * self.n_cc * (self.n_rs / self.n_fft)        # Assuming 5 operations to extract each RS
+        msg_in_size = self.n_fft * self.n_cc * self.dtype_size[DataTypes.complexfp16]
+        msg_out_size = msg_in_size
+
+        return n_ops, msg_in_size, msg_out_size
         
         
 
+    def match_filter(self):
+        """
+        Computes the processing parameters for the match filter operation.
 
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        n_ops : int
+            Number of operations
+        msg_in_size : int
+            Size of the input message
+        msg_out_size : int
+            Size of the output message
+        """
+        
+        
+        self.conv1d(self, n=self., nchan_in=1, nchan_out=1,
+            kernel_size=3, 
+            dtype_weight=DataTypes.fp16, dtype_data=DataTypes.fp16,
+            stride =1,
+            add_bias=True,
+            params_in_msg=False,
+            channel_wise=False)
+        
+        return n_ops, msg_in_size, msg_out_size
 

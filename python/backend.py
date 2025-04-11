@@ -7,7 +7,7 @@ import_cupy=False
 import_cupyx=False
 import_sklearn=True
 import_cv2=False
-import_torch=False
+import_torch=True
 import_pynq=False
 import_sivers=False
 import_adafruit=False
@@ -50,6 +50,7 @@ if import_matplotlib:
     # matplotlib.use('TkAgg')
     # matplotlib.use('WebAgg')
     # matplotlib.use('Agg')
+    import skimage.measure as measure
 
 if import_numpy:
     import numpy
@@ -114,6 +115,7 @@ if import_torch:
     import torch.nn.functional as F
     from torch.utils.data import Dataset, DataLoader, random_split
     import torchvision.transforms as transforms
+    from fvcore.nn import FlopCountAnalysis
 
 if import_pynq:
     from pynq import Overlay, allocate, MMIO, Clocks, interrupt, GPIO
