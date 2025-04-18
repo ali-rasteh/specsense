@@ -150,13 +150,13 @@ class SS_Detection(Signal_Utils):
         self.shape = tuple([1024 for _ in range(len(self.shape))])
 
         if len(self.shape)==1:
-            sig_size_freq = 300
             sig_start_freq = 312
+            sig_size_freq = 300
         elif len(self.shape)==2:
-            sig_size_freq = 200
-            sig_start_freq = 412
-            sig_size_time = 400
-            sig_start_time = 380
+            sig_start_freq = 312
+            sig_size_freq = 300
+            sig_start_time = 280
+            sig_size_time = 450
 
         sig_size_min = tuple([sig_size_freq for _ in range(len(self.shape))])
         sig_size_max = sig_size_min
