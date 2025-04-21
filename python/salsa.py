@@ -846,32 +846,32 @@ class SALSA_Comp_5G(SALSA_Comp):
         
         
 
-    def match_filter(self):
-        """
-        Computes the processing parameters for the match filter operation.
+    # def match_filter(self):
+    #     """
+    #     Computes the processing parameters for the match filter operation.
 
-        Parameters
-        ----------
-        None
+    #     Parameters
+    #     ----------
+    #     None
 
-        Returns
-        -------
-        n_ops : int
-            Number of operations
-        msg_in_size : int
-            Size of the input message
-        msg_out_size : int
-            Size of the output message
-        """
+    #     Returns
+    #     -------
+    #     n_ops : int
+    #         Number of operations
+    #     msg_in_size : int
+    #         Size of the input message
+    #     msg_out_size : int
+    #         Size of the output message
+    #     """
         
         
-        self.conv1d(self, n=self., nchan_in=1, nchan_out=1,
-            kernel_size=3, 
-            dtype_weight=DataTypes.fp16, dtype_data=DataTypes.fp16,
-            stride =1,
-            add_bias=True,
-            params_in_msg=False,
-            channel_wise=False)
+    #     self.conv1d(self, n=self., nchan_in=1, nchan_out=1,
+    #         kernel_size=3, 
+    #         dtype_weight=DataTypes.fp16, dtype_data=DataTypes.fp16,
+    #         stride =1,
+    #         add_bias=True,
+    #         params_in_msg=False,
+    #         channel_wise=False)
         
-        return n_ops, msg_in_size, msg_out_size
+    #     return n_ops, msg_in_size, msg_out_size
 
