@@ -301,7 +301,6 @@ class Sim(object):
         self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(self.snr_avg[self.Iconn]))/self.chan_gain_max[self.Iconn])
 
 
-
     def compute_mimo_matrix(self):
         """
         Compute the MIMO matrix for the gNB and the UEs
