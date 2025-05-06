@@ -1,13 +1,6 @@
 # mimo_sim.py:  Simulation of the long-term beamforming and short-term spatial equalization for a gNB with multiple UEs
-import sionna
-import tensorflow as tf
-import numpy as np
-import matplotlib.pyplot as plt
-from sionna.rt import load_scene, Transmitter, Receiver, PlanarArray, PathSolver
-from sionna.phy.ofdm import ResourceGrid
-from sionna.phy.channel import cir_to_ofdm_channel
-import os
-import pickle
+from backend import *
+from backend import be_np as np, be_scp as scipy
 
 
 # We reload the nonlin module to avoid re-running the code in it
@@ -19,6 +12,10 @@ if 'miutils' not in sys.modules:
 else:
     importlib.reload(miutils)
 from miutils import CoverageMapPlanner
+
+
+
+
 
 class Sim(object):
     """
@@ -40,6 +37,8 @@ class Sim(object):
                  nsect : int = 3, 
                  nrow_gnb : int = 8, 
                  ncol_gnb : int = 4,
+                 nrow_ue : int = 1, 
+                 ncol_ue : int = 1,
                  scs_khz : float = 120., 
                  bw_mhz : float = 100,
                  freq_spacing  : str = 'rb', 
@@ -66,6 +65,10 @@ class Sim(object):
             Number of rows in the gNB array.  Default is 64.
         ncol_gnb : int
             Num of columns in the gNB array.  Default is 16.
+        nrow_ue : int
+            Number of rows in the UE array.  Default is 1.
+        ncol_ue : int
+            Number of columns in the UE array.  Default is 1.
         scs_khz : float
             Subcarrier spacing in kHz.  Default is 120 kHz.
         bw_mhz : float
@@ -95,6 +98,8 @@ class Sim(object):
         self.ue_height_above_ground = 1.5
         self.nrow_gnb = nrow_gnb
         self.ncol_gnb = ncol_gnb
+        self.nrow_ue = nrow_ue
+        self.ncol_ue = ncol_ue
         self.scs_khz = scs_khz
         self.bw_mhz = bw_mhz
         self.freq_spacing = freq_spacing
@@ -114,6 +119,7 @@ class Sim(object):
         self.bw_mhz = self.nsc * self.scs_khz / 1e3
         
         
+
         
 
     def drop_users(self):
@@ -217,7 +223,7 @@ class Sim(object):
 
         # Set the UE array
         self.scene.tx_array = PlanarArray(
-            num_rows=1, num_cols=1,
+            num_rows=self.nrow_ue, num_cols=self.ncol_ue,
             vertical_spacing=0.5,
             horizontal_spacing=0.5,
             pattern="dipole",
@@ -238,6 +244,7 @@ class Sim(object):
 
         # Get the CIR.  We add a dimension to be compatible with the OFDM channel
         self.a, self.tau = self.paths.cir(out_type='tf')
+        # print(tf.abs(self.a[0,:,0,0,0,0]))
         self.a = tf.expand_dims(self.a, axis=0)
         self.tau = tf.expand_dims(self.tau, axis=0)
 
@@ -281,8 +288,9 @@ class Sim(object):
 
         # Compute the SNR at the max TX power
         EkT = -174
-        snr_max = self.ptx_ue_max + 10*np.log10(self.chan_gain_max) -\
-              self.gnb_nf - EkT -10*np.log10(self.bw_mhz*1e6)
+        self.gnb_noise_fl_db = EkT + 10*np.log10(self.bw_mhz*1e6) + self.gnb_nf
+        self.gnb_noise_fl = 10**(self.gnb_noise_fl_db/10)
+        snr_max = self.ptx_ue_max + 10*np.log10(self.chan_gain_max) - self.gnb_noise_fl_db
         
         # Find users that are in outage
         self.Iout = np.where(snr_max < self.snr_tgt_range[0])[0]
@@ -317,9 +325,9 @@ class Sim(object):
         self.H  = self.H  * scale[None, None, :, None, None ]
 
 
-    def compute_3gpp_capacity(self, snr):
+    def compute_capacity_3gpp(self, snr):
         """
-        Compute the 3GPP capacity for the gNB
+        Compute the channel capacity using the 3GPP model
         """
         alpha = 0.6
         beta = 1.0
@@ -340,6 +348,25 @@ class Sim(object):
         """
 
         # Compute the capacity
+        # H Shape: (nrx, nrx_ant, ntx, ntx_ant, nfreq)
+        print("H Shape: ", self.H.shape)
+        H_cap = tf.reduce_mean(tf.abs(self.H)**2, axis=(1,3,4)).numpy()
+        max_idx = np.argmax(H_cap, axis=0)
+        H_cap = np.zeros(self.H.shape[1:], dtype=self.H.numpy().dtype)
+        for i in range(self.H.shape[2]):
+            H_cap[:, i, :, :] = self.H[max_idx[i], :, i, :, :]
+        # H_cap = np.maximum(H_cap, 1e-30)
+
+        max_freq = np.argmax(np.mean(np.abs(H_cap)**2, axis=(0,1,2)))
+        H_cap = H_cap[:, :, :, max_freq]
+
+        caps = np.zeros(self.H.shape[2])
+        for i in range(H_cap.shape[1]):
+            H = H_cap[:, i, :]
+            n_path = np.linalg.matrix_rank(H)
+            alpha = 10**(0.1*self.ptx_ue_max) / n_path / self.gnb_noise_fl
+            c = np.log2(np.linalg.det(np.eye(H.shape[1]) + alpha * np.abs(H.conj().T @ H)))
+            # print(f"Capacity {i}: {c}")
         
         
 
@@ -366,7 +393,7 @@ class Sim(object):
         plt.tick_params(axis='both', which='major', labelsize=12)
         plt.grid()
         plt.show()
-        plt.savefig("region.png")
+        # plt.savefig("region.png")
 
     
 

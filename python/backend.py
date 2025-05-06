@@ -8,6 +8,7 @@ import_cupyx=False
 import_sklearn=False
 import_cv2=False
 import_torch=False
+import_sionna=True
 import_pynq=False
 import_sivers=False
 import_adafruit=False
@@ -35,6 +36,7 @@ if import_general:
     import itertools
     import heapq
     import atexit
+    import pickle
 
 if import_networking:
     from scp import SCPClient
@@ -48,7 +50,7 @@ if import_matplotlib:
     from matplotlib.colors import LogNorm
     from matplotlib.patches import Wedge, Circle, FancyArrow
     # matplotlib.use('TkAgg')
-    # matplotlib.use('WebAgg')
+    matplotlib.use('WebAgg')
     # matplotlib.use('Agg')
     import skimage.measure as measure
 
@@ -117,6 +119,45 @@ if import_torch:
     import torchvision.transforms as transforms
     from fvcore.nn import FlopCountAnalysis
 
+
+if import_sionna:
+    if os.getenv("CUDA_VISIBLE_DEVICES") is None:
+        gpu_num = 0 # Use "" to use the CPU
+        os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu_num}"
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+    import sionna
+
+    # Configure the notebook to use only a single GPU and allocate only as much memory as needed
+    # For more details, see https://www.tensorflow.org/guide/gpu
+    import tensorflow as tf
+    # gpus = tf.config.list_physical_devices('GPU')
+    # if gpus:
+    #     try:
+    #         tf.config.experimental.set_memory_growth(gpus[0], True)
+    #     except RuntimeError as e:
+    #         print(e)
+    tf.get_logger().setLevel('ERROR')
+
+    # Set random seed for reproducibility
+    sionna.phy.config.seed = 42
+
+    from sionna.rt import load_scene, Camera, Transmitter, Receiver, PlanarArray,\
+                        PathSolver, RadioMapSolver
+    from sionna.phy import Block
+    from sionna.phy.mimo import StreamManagement
+    from sionna.phy.ofdm import ResourceGrid, ResourceGridMapper, LSChannelEstimator, LMMSEEqualizer, \
+                            OFDMModulator, OFDMDemodulator, RZFPrecoder, RemoveNulledSubcarriers
+    from sionna.phy.channel.tr38901 import Antenna, AntennaArray, UMi, UMa, RMa, CDL
+    from sionna.phy.channel import gen_single_sector_topology as gen_topology
+    from sionna.phy.channel import subcarrier_frequencies, cir_to_ofdm_channel, cir_to_time_channel, \
+                               time_lag_discrete_time_channel, ApplyOFDMChannel, ApplyTimeChannel, \
+                               OFDMChannel, TimeChannel
+    from sionna.phy.fec.ldpc import LDPC5GEncoder, LDPC5GDecoder
+    from sionna.phy.mapping import Mapper, Demapper, BinarySource, QAMSource
+    from sionna.phy.utils import ebnodb2no, sim_ber, compute_ber
+
+
 if import_pynq:
     from pynq import Overlay, allocate, MMIO, Clocks, interrupt, GPIO
     from pynq.lib import dma
@@ -130,3 +171,4 @@ if import_adafruit:
     import board
     from adafruit_motorkit import MotorKit
     from adafruit_motor import stepper
+
