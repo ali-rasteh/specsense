@@ -139,9 +139,6 @@ if import_sionna:
     #         print(e)
     tf.get_logger().setLevel('ERROR')
 
-    # Set random seed for reproducibility
-    sionna.phy.config.seed = 42
-
     from sionna.rt import load_scene, Camera, Transmitter, Receiver, PlanarArray,\
                         PathSolver, RadioMapSolver
     from sionna.phy import Block
@@ -152,7 +149,7 @@ if import_sionna:
     from sionna.phy.channel import gen_single_sector_topology as gen_topology
     from sionna.phy.channel import subcarrier_frequencies, cir_to_ofdm_channel, cir_to_time_channel, \
                                time_lag_discrete_time_channel, ApplyOFDMChannel, ApplyTimeChannel, \
-                               OFDMChannel, TimeChannel
+                               OFDMChannel, TimeChannel, CIRDataset
     from sionna.phy.fec.ldpc import LDPC5GEncoder, LDPC5GDecoder
     from sionna.phy.mapping import Mapper, Demapper, BinarySource, QAMSource
     from sionna.phy.utils import ebnodb2no, sim_ber, compute_ber

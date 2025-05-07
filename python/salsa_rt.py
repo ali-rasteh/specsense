@@ -1,7 +1,7 @@
 # mimo_sim.py:  Simulation of the long-term beamforming and short-term spatial equalization for a gNB with multiple UEs
 from backend import *
 from backend import be_np as np, be_scp as scipy
-
+from salsa_mimo_ofdm import MIMO_OFDM, CIRGenerator
 
 # We reload the nonlin module to avoid re-running the code in it
 # when we are in the interactive mode (e.g. Jupyter notebook).
@@ -30,19 +30,21 @@ class Sim(object):
      the complete equalization.  
      * Create a loop so that we can run multiple drops of the UEs and then aggregate the channels
     """
-    def __init__(self, 
+    def __init__(self,
                  gnb_pos : np.ndarray = None, 
                  dist_range : np.ndarray =None, 
                  nue : int = 4, 
                  nsect : int = 3, 
-                 nrow_gnb : int = 8, 
+                 nrow_gnb : int = 8,
                  ncol_gnb : int = 4,
                  nrow_ue : int = 1, 
                  ncol_ue : int = 1,
+                 fc : float = 2.6e9,
                  scs_khz : float = 120., 
                  bw_mhz : float = 100,
                  freq_spacing  : str = 'rb', 
-                 snr_tgt_range : np.ndarray | None = None):
+                 snr_tgt_range : np.ndarray | None = None,
+                 target_n_cirs : int = 1):
 
         """
         Constructor 
@@ -69,6 +71,8 @@ class Sim(object):
             Number of rows in the UE array.  Default is 1.
         ncol_ue : int
             Number of columns in the UE array.  Default is 1.
+        fc : float
+            Carrier frequency in Hz.  Default is 2.6 GHz.
         scs_khz : float
             Subcarrier spacing in kHz.  Default is 120 kHz.
         bw_mhz : float
@@ -83,9 +87,12 @@ class Sim(object):
             the RX SNR is snr_per_ant_range[1] dB at the gNB, but will be lower
             if the UE does not have enough power.  If the max power is below snr_per_ant_range[0] dB,
             the UE is considered in outage.
+        target_n_cirs : int
+            Number of drops to perform.  Default is 1.
         """
 
         # Set the parameters
+        self.target_n_cirs = target_n_cirs
         if gnb_pos is None:
             gnb_pos = np.array([0, 0])
         if dist_range is None:
@@ -100,14 +107,28 @@ class Sim(object):
         self.ncol_gnb = ncol_gnb
         self.nrow_ue = nrow_ue
         self.ncol_ue = ncol_ue
+        self.fc = fc
         self.scs_khz = scs_khz
         self.bw_mhz = bw_mhz
+        self.n_ofdm_symbols = 14
         self.freq_spacing = freq_spacing
         self.ptx_ue_max = 26 # max TX power in dBm
         self.gnb_nf = 2  # gNB noise figure in dB
         if snr_tgt_range is None:
             snr_tgt_range = np.array([-6, 3])
         self.snr_tgt_range = snr_tgt_range
+        self.n_bits_per_symbol = 2
+        self.coderate = 0.5
+        self.n_guard_carriers = [0, 0]
+        self.dc_null = False
+        self.pilot_pattern = "kronecker"
+        self.pilot_ofdm_symbol_indices = [2, 11]
+        self.cyclic_prefix_length = 20
+        self.perfect_csi = False
+        self.direction = "uplink"
+        self.domain = "freq"
+        self.batch_size = 2
+        self.delay_spread = 100e-9
 
         self.nue_tot = self.nue*self.nsect
         
@@ -117,17 +138,18 @@ class Sim(object):
         self.nrb = int(self.bw_mhz*1e3 / (self.scs_khz * self.nsc_rb))
         self.nsc = self.nrb * self.nsc_rb
         self.bw_mhz = self.nsc * self.scs_khz / 1e3
-        
-        
+        self.bs_ue_association = np.zeros([self.nsect, self.nue_tot])
+
+        self.empty_scene = False
+        self.save_chan = False
 
         
 
-    def drop_users(self):
+    def load_scene(self):
         """
-        Randomly drop users, compute the channels and save the channels to a pickle file
+        Load the scene from a file or create a new scene.
         """
         # Load the scene
-        self.empty_scene = False
         if not self.empty_scene:
             mod_dir=os.path.dirname(os.path.abspath(__file__))
             scene_path=os.path.join(mod_dir, "Denver/denver.xml")
@@ -146,9 +168,9 @@ class Sim(object):
             self.cm.compute_grid_attributes()
 
             # Place the gNB in the center of the scene
-            dist = (self.cm.xgrid - self.gnb_pos[0])**2 +\
+            self.dist = (self.cm.xgrid - self.gnb_pos[0])**2 +\
                 (self.cm.ygrid - self.gnb_pos[1])**2
-            idx = np.argmin(dist)
+            idx = np.argmin(self.dist)
             tx_idx = np.unravel_index(idx, self.cm.xgrid.shape)
             self.gnb_pos = np.array(
                 [self.cm.xgrid[tx_idx[0], tx_idx[1]],
@@ -157,40 +179,26 @@ class Sim(object):
             self.gnb_pos[2] += self.gnb_height_above_ground
 
             # Compute distances to all the grid points
-            dist = np.sqrt((self.cm.xgrid - self.gnb_pos[0])**2 +\
+            self.dist = np.sqrt((self.cm.xgrid - self.gnb_pos[0])**2 +\
                         (self.cm.ygrid - self.gnb_pos[1])**2 +\
                         (self.cm.zmax_grid - self.gnb_pos[2])**2)
-            dist = np.sqrt(dist**2 + self.cm.zmin_grid**2)
+            self.dist = np.sqrt(self.dist**2 + self.cm.zmin_grid**2)
 
-            # Select nue points randomly that are within 
-            # the distance range and not in a building
-            idx = np.where(
-                (dist > self.dist_range[0]) &\
-                (dist < self.dist_range[1]) &\
-                (~self.cm.bldg_grid))
-            npts = len(idx[0])
-            if npts < self.nue:
-                raise ValueError(f"Not enough points in the distance range {self.dist_range}.\n"
-                                f"Only {npts} points found.")
-            I = np.random.choice(npts, self.nue*self.nsect, replace=False)
-            ue_x = self.cm.xgrid[idx[0][I], idx[1][I]]
-            ue_y = self.cm.ygrid[idx[0][I], idx[1][I]]
-            ue_z = self.cm.zmax_grid[idx[0][I], idx[1][I]]
-            self.ue_pos = np.column_stack((ue_x, ue_y, ue_z))
-            self.ue_pos[:,2] += self.ue_height_above_ground
+            self.angles = np.arctan2(self.cm.ygrid - self.gnb_pos[1],
+                self.cm.xgrid - self.gnb_pos[0])
 
         else:
             self.scene = sionna.rt.Scene()
             self.gnb_pos = np.array([0, 0, self.gnb_height_above_ground])
-            
-            r = np.random.uniform(self.dist_range[0], self.dist_range[1], size=(self.nue*self.nsect))
-            phi = np.random.uniform(0, 2*np.pi, size=(self.nue*self.nsect))
-            ue_x = r*np.cos(phi)
-            ue_y = r*np.sin(phi)
-            ue_z = self.ue_height_above_ground*np.ones(self.nue*self.nsect)
-            self.ue_pos = np.column_stack((ue_x, ue_y, ue_z))
 
 
+
+
+
+    def drop_users(self):
+        """
+        Randomly drop users, compute the channels and save the channels to a pickle file
+        """
         
         # Add the gNB receivers.  There is one RX
         # per sector
@@ -202,14 +210,64 @@ class Sim(object):
                     orientation=[yaw,0,0])
             self.scene.add(rx)
 
-        # Add the UE transmitters.  There is one TX
-        # per UE
-        for i in range(self.nue*self.nsect):
-            rx = sionna.rt.Transmitter(name=f"ue-{i}",
+            # sect_orientation = np.array([np.cos(yaw), np.sin(yaw)])
+            sect_angle_range = np.array([yaw - np.pi/self.nsect, yaw + np.pi/self.nsect])
+            if np.min(sect_angle_range) < -np.pi:
+                sect_angle_range += 2*np.pi
+            if np.max(sect_angle_range) > np.pi:
+                sect_angle_range -= 2*np.pi
+            
+
+            if not self.empty_scene:
+                # Select nue points randomly that are within 
+                # the distance range and not in a building
+                idx = np.where(
+                    (self.dist > self.dist_range[0])    &\
+                    (self.dist < self.dist_range[1])    &\
+                    (~self.cm.bldg_grid)                &\
+                    (self.angles > sect_angle_range[0]) &\
+                    (self.angles < sect_angle_range[1]))
+                npts = len(idx[0])
+                if npts < self.nue:
+                    raise ValueError(f"Not enough points in the distance range {self.dist_range}.\n"
+                                    f"Only {npts} points found.")
+                I = np.random.choice(npts, self.nue, replace=False)
+                ue_x = self.cm.xgrid[idx[0][I], idx[1][I]]
+                ue_y = self.cm.ygrid[idx[0][I], idx[1][I]]
+                ue_z = self.cm.zmax_grid[idx[0][I], idx[1][I]]
+                self.ue_pos = np.column_stack((ue_x, ue_y, ue_z))
+                self.ue_pos[:,2] += self.ue_height_above_ground
+
+            else:
+                r = np.random.uniform(self.dist_range[0], self.dist_range[1], size=(self.nue))
+                phi = np.random.uniform(sect_angle_range[0], sect_angle_range[1], size=(self.nue))
+                ue_x = r*np.cos(phi)
+                ue_y = r*np.sin(phi)
+                ue_z = self.ue_height_above_ground*np.ones(self.nue)
+                self.ue_pos = np.column_stack((ue_x, ue_y, ue_z))
+
+
+            # Add the UE transmitters.  There is one TX
+            # per UE
+            for i in range(self.nue):
+                ue_idx = s*self.nue + i
+                tx = sionna.rt.Transmitter(name=f"ue-{ue_idx}",
                         color = [0.0, 1.0, 0.0],
                         position=self.ue_pos[i])
-            self.scene.add(rx)
-            rx.look_at(self.gnb_pos)
+                self.scene.add(tx)
+                tx.look_at(self.gnb_pos)
+
+                # distances = []
+                # tx_to_gnb = self.ue_pos[i, :2] - self.gnb_pos[:2]
+                # tx_to_gnb_norm = tx_to_gnb / np.linalg.norm(tx_to_gnb)
+                # distance = np.dot(sector_orientation, tx_to_gnb_norm)
+                # distances.append(distance)
+
+                # Find the sector with the maximum alignment
+                # associated_sector = np.argmax(distances)
+                self.bs_ue_association[s, ue_idx] = 1
+            
+
 
         # Set the gNB array
         self.scene.rx_array = PlanarArray(
@@ -238,15 +296,12 @@ class Sim(object):
             scene=self.scene,
             max_depth=3, 
             samples_per_src=int(1e5),
-            max_num_paths_per_src=10,
+            max_num_paths_per_src=100,
             synthetic_array=True
         )
 
         # Get the CIR.  We add a dimension to be compatible with the OFDM channel
         self.a, self.tau = self.paths.cir(out_type='tf')
-        # print(tf.abs(self.a[0,:,0,0,0,0]))
-        self.a = tf.expand_dims(self.a, axis=0)
-        self.tau = tf.expand_dims(self.tau, axis=0)
 
         # Get the channel at the frequencies
         bw = self.scs_khz*1e3*self.nsc_rb 
@@ -255,15 +310,18 @@ class Sim(object):
         elif self.freq_spacing == 'sc':  
             self.freq = tf.linspace(-0.5, 0.5, self.nsc)*bw
         else:
-            raise ValueError(f"freq_spacing must be 'rb' or 'sc'.  Got {self.freq_spacing}.")
-        self.chan = cir_to_ofdm_channel(self.freq, self.a, self.tau)
+            raise ValueError(f"freq_spacing must be 'rb' or 'sc'. Got {self.freq_spacing}.")
+        tau = tf.expand_dims(self.tau, axis=0)
+        a = tf.expand_dims(self.a, axis=0)
+        self.chan = cir_to_ofdm_channel(self.freq, a, tau)
 
         # Remove first axis
         self.chan = tf.squeeze(self.chan, axis=(0,5))
 
         # Save the OFDM channel to a pickle file
-        with open("chan.pkl", "wb") as f:
-            pickle.dump([self.chan, self.ue_pos, self.gnb_pos], f)
+        if self.save_chan:
+            with open("chan.pkl", "wb") as f:
+                pickle.dump([self.chan, self.ue_pos, self.gnb_pos], f)
 
 
     def load_users(self):
@@ -392,30 +450,146 @@ class Sim(object):
         plt.title("Region of Interest", fontsize=16, fontweight='bold')
         plt.tick_params(axis='both', which='major', labelsize=12)
         plt.grid()
-        plt.show()
-        # plt.savefig("region.png")
+        # plt.show()
+        plt.savefig("region.png")
 
     
+    def create_cir_dataset(self):
+        a_list = []
+        tau_list = []
 
-# Simulate paths
-drop_users = True
-sim = Sim(nue=10,dist_range=np.array([20, 1000]))
-if drop_users:
-    sim.drop_users()
-sim.load_users()
-sim.ue_associate_power_control()
-sim.compute_mimo_matrix()
-sim.compute_baseline_capacity()
-sim.plot_region()
+        max_num_paths = 0
 
-# Find the SNR to 
+        n_run = self.target_n_cirs
+        for idx in range(n_run):
+            print(f"Progress: {idx+1}/{n_run}", end="\r")
+
+            self.load_scene()
+            self.drop_users()
+            # self.load_users()
+            self.ue_associate_power_control()
+            self.compute_mimo_matrix()
+
+            a_list.append(self.a)
+            tau_list.append(self.tau)
+
+            # Update maximum number of paths over all batches of CIRs
+            num_paths = self.a.shape[-2]
+            if num_paths > max_num_paths:
+                max_num_paths = num_paths
+                    
+            # self.plot_region()
+
+        a = []
+        tau = []
+        for a_,tau_ in zip(a_list, tau_list):
+            num_paths = a_.shape[-2]
+            a_ = np.pad(a_, [[0,0],[0,0],[0,0],[0,0],[0,max_num_paths-num_paths],[0,0]], constant_values=0)
+            tau_ = np.pad(tau_, [[0,0],[0,0],[0,max_num_paths-num_paths]], constant_values=0)
+            a_ = np.expand_dims(a_, axis=0)
+            tau_ = np.expand_dims(tau_, axis=0)
+            a.append(a_)
+            tau.append(tau_)
+        
+        a = np.concatenate(a, axis=0) # Concatenate along the num_rx dimension
+        tau = np.concatenate(tau, axis=0)
+
+        # # Add a batch_size dimension
+        # a = np.expand_dims(a, axis=0)
+        # tau = np.expand_dims(tau, axis=0)
+
+        # # Exchange the num_tx and batchsize dimensions
+        # a = np.transpose(a, [3, 1, 2, 0, 4, 5, 6])
+        # tau = np.transpose(tau, [2, 1, 0, 3])
+
+        # Remove CIRs that have no active link (i.e., a is all-zero)
+        p_link = np.sum(np.abs(a)**2, axis=tuple(range(1, a.ndim)))
+        a = a[p_link>0.,...]
+        tau = tau[p_link>0.,...]
+
+        self.a = a
+        self.tau = tau
+
+        n_dataset = a.shape[0]
+        n_rx = self.a.shape[1]
+        n_rx_ant = self.a.shape[2]
+        n_tx = self.a.shape[3]
+        n_tx_ant = self.a.shape[4]
+        max_n_paths = self.a.shape[5]
+        n_time_steps = self.a.shape[6]
+
+        self.cir_generator = CIRGenerator(self.a, self.tau)
+
+        # Initialises a channel model that can be directly used by OFDMChannel layer
+        self.channel_model = CIRDataset(self.cir_generator,
+                                self.batch_size,
+                                n_rx,
+                                n_rx_ant,
+                                n_tx,
+                                n_tx_ant,
+                                max_n_paths,
+                                n_time_steps)
+        
+        self.nsc = 128 * 3
+        # self.nue_tot = 16
+        
+        self.phy_model = MIMO_OFDM(channel_mode = "dataset",
+                domain = self.domain,
+                direction = self.direction,
+                channel_model = self.channel_model,
+                delay_spread = self.delay_spread,
+                perfect_csi = self.perfect_csi,
+                # cyclic_prefix_length = self.cyclic_prefix_length,
+                # pilot_ofdm_symbol_indices = self.pilot_ofdm_symbol_indices,
+                # subcarrier_spacing = self.scs_khz* 1e3,
+                carrier_frequency = self.fc,
+                fft_size = self.nsc,
+                # num_ofdm_symbols = self.n_ofdm_symbols,
+                num_sectors = self.nsect,
+                num_ut = self.nue_tot,
+                bs_ut_association = self.bs_ue_association,
+                num_ut_ant_row = self.nrow_ue,
+                num_ut_ant_col = self.ncol_ue,
+                num_bs_ant_row = self.nrow_gnb,
+                num_bs_ant_col = self.ncol_gnb,
+                dc_null = self.dc_null,
+                num_guard_carriers = self.n_guard_carriers,
+                # pilot_pattern = self.pilot_pattern,
+                num_bits_per_symbol = self.n_bits_per_symbol,
+                coderate = self.coderate)
+        
+
+    def run_simulation(self):
+        # Run the simulation
+        # b, b_hat = self.phy_model.call(batch_size=self.batch_size)
+
+        ebno_dbs=list(np.arange(-5, 20, 4.0))
+
+        ber, bler = sim_ber(self.phy_model,
+                            ebno_dbs=ebno_dbs,
+                            batch_size=self.batch_size,
+                            max_mc_iter=100,
+                            num_target_block_errors=1000,
+                            target_bler=1e-3)
+        print(f"BER: {ber}, BLER: {bler}")
 
 
-    # Save the paths with pickle
-    #with open("paths.pkl", "wb") as f:
-    #    pickle.dump(sim.paths, f)
 
-# Load the paths with pickle
-#with open("paths.pkl", "rb") as f:
-#    paths = pickle.load(f)
+
+
+
+if __name__ == "__main__":
+    # Set the random seed
+    np.random.seed(42)
+    # Set the random seed for TensorFlow
+    tf.random.set_seed(42)
+    # Set random seed for reproducibility
+    sionna.phy.config.seed = 42
+
+    # Simulate paths
+    sim = Sim(nue=8, dist_range=np.array([20, 1000]), target_n_cirs=5)
+    sim.create_cir_dataset()
+    sim.run_simulation()
+
+
 
