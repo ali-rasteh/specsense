@@ -44,7 +44,8 @@ class Sim(object):
                  bw_mhz : float = 100,
                  freq_spacing  : str = 'rb', 
                  snr_tgt_range : np.ndarray | None = None,
-                 target_n_cirs : int = 1):
+                 target_n_cirs : int = 1,
+                 load_cir_dataset : bool = False):
 
         """
         Constructor 
@@ -89,6 +90,8 @@ class Sim(object):
             the UE is considered in outage.
         target_n_cirs : int
             Number of drops to perform.  Default is 1.
+        load_cir_dataset : bool
+            If True, the CIR dataset is loaded from a file.  If False, the CIR dataset is created
         """
 
         # Set the parameters
@@ -110,6 +113,7 @@ class Sim(object):
         self.fc = fc
         self.scs_khz = scs_khz
         self.bw_mhz = bw_mhz
+        self.load_cir_dataset = load_cir_dataset
         self.n_ofdm_symbols = 14
         self.freq_spacing = freq_spacing
         self.ptx_ue_max = 26 # max TX power in dBm
@@ -141,7 +145,10 @@ class Sim(object):
         self.bs_ue_association = np.zeros([self.nsect, self.nue_tot])
 
         self.empty_scene = False
-        self.save_chan = False
+
+        self.EkT = -174
+        self.gnb_noise_fl_db = self.EkT + 10*np.log10(self.bw_mhz*1e6) + self.gnb_nf
+        self.gnb_noise_fl = 10**(self.gnb_noise_fl_db/10)
 
         
 
@@ -200,6 +207,8 @@ class Sim(object):
         Randomly drop users, compute the channels and save the channels to a pickle file
         """
         
+        self.ue_pos = np.zeros((self.nue_tot, 3))
+        
         # Add the gNB receivers.  There is one RX
         # per sector
         for s in range(self.nsect):
@@ -235,8 +244,8 @@ class Sim(object):
                 ue_x = self.cm.xgrid[idx[0][I], idx[1][I]]
                 ue_y = self.cm.ygrid[idx[0][I], idx[1][I]]
                 ue_z = self.cm.zmax_grid[idx[0][I], idx[1][I]]
-                self.ue_pos = np.column_stack((ue_x, ue_y, ue_z))
-                self.ue_pos[:,2] += self.ue_height_above_ground
+                self.ue_pos_sect = np.column_stack((ue_x, ue_y, ue_z))
+                self.ue_pos_sect[:,2] += self.ue_height_above_ground
 
             else:
                 r = np.random.uniform(self.dist_range[0], self.dist_range[1], size=(self.nue))
@@ -244,8 +253,7 @@ class Sim(object):
                 ue_x = r*np.cos(phi)
                 ue_y = r*np.sin(phi)
                 ue_z = self.ue_height_above_ground*np.ones(self.nue)
-                self.ue_pos = np.column_stack((ue_x, ue_y, ue_z))
-
+                self.ue_pos_sect = np.column_stack((ue_x, ue_y, ue_z))
 
             # Add the UE transmitters.  There is one TX
             # per UE
@@ -253,12 +261,13 @@ class Sim(object):
                 ue_idx = s*self.nue + i
                 tx = sionna.rt.Transmitter(name=f"ue-{ue_idx}",
                         color = [0.0, 1.0, 0.0],
-                        position=self.ue_pos[i])
+                        position=self.ue_pos_sect[i])
                 self.scene.add(tx)
                 tx.look_at(self.gnb_pos)
+                self.ue_pos[ue_idx] = self.ue_pos_sect[i]
 
                 # distances = []
-                # tx_to_gnb = self.ue_pos[i, :2] - self.gnb_pos[:2]
+                # tx_to_gnb = self.ue_pos_sect[i, :2] - self.gnb_pos[:2]
                 # tx_to_gnb_norm = tx_to_gnb / np.linalg.norm(tx_to_gnb)
                 # distance = np.dot(sector_orientation, tx_to_gnb_norm)
                 # distances.append(distance)
@@ -319,9 +328,8 @@ class Sim(object):
         self.chan = tf.squeeze(self.chan, axis=(0,5))
 
         # Save the OFDM channel to a pickle file
-        if self.save_chan:
-            with open("chan.pkl", "wb") as f:
-                pickle.dump([self.chan, self.ue_pos, self.gnb_pos], f)
+        with open("chan.pkl", "wb") as f:
+            pickle.dump([self.chan, self.ue_pos, self.gnb_pos], f)
 
 
     def load_users(self):
@@ -345,9 +353,6 @@ class Sim(object):
         self.chan_gain_max = np.maximum(chan_gain_max, 1e-30)
 
         # Compute the SNR at the max TX power
-        EkT = -174
-        self.gnb_noise_fl_db = EkT + 10*np.log10(self.bw_mhz*1e6) + self.gnb_nf
-        self.gnb_noise_fl = 10**(self.gnb_noise_fl_db/10)
         snr_max = self.ptx_ue_max + 10*np.log10(self.chan_gain_max) - self.gnb_noise_fl_db
         
         # Find users that are in outage
@@ -427,7 +432,6 @@ class Sim(object):
             # print(f"Capacity {i}: {c}")
         
         
-
         
     def plot_region(self):
         """
@@ -454,7 +458,9 @@ class Sim(object):
         plt.savefig("region.png")
 
     
-    def create_cir_dataset(self):
+
+    def simulate_ray_tracing(self):
+
         a_list = []
         tau_list = []
 
@@ -510,7 +516,14 @@ class Sim(object):
         self.a = a
         self.tau = tau
 
-        n_dataset = a.shape[0]
+        # Save self.a and self.tau for future use
+        with open("cir_dataset.pkl", "wb") as f:
+            pickle.dump({"a": self.a, "tau": self.tau, "bs_ue_association": self.bs_ue_association}, f)
+
+
+    def create_cir_dataset(self):
+        
+        n_dataset = self.a.shape[0]
         n_rx = self.a.shape[1]
         n_rx_ant = self.a.shape[2]
         n_tx = self.a.shape[3]
@@ -530,6 +543,25 @@ class Sim(object):
                                 max_n_paths,
                                 n_time_steps)
         
+        
+
+    def run_simulation(self):
+        # Run the simulation
+
+
+        if self.load_cir_dataset:
+            # Load the CIR dataset from a file
+            with open("cir_dataset.pkl", "rb") as f:
+                data = pickle.load(f)
+                self.a = data["a"]
+                self.tau = data["tau"]
+                self.bs_ue_association = data["bs_ue_association"]
+        else:
+            # Create the CIR dataset from the simulation
+            self.simulate_ray_tracing()
+
+        self.create_cir_dataset()
+
         self.nsc = 128 * 3
         # self.nue_tot = 16
         
@@ -559,19 +591,22 @@ class Sim(object):
                 coderate = self.coderate)
         
 
-    def run_simulation(self):
-        # Run the simulation
-        # b, b_hat = self.phy_model.call(batch_size=self.batch_size)
+        no = self.gnb_noise_fl
+        b, b_hat = self.phy_model.call(batch_size=self.batch_size, no=no)
+        print(f"b shape: {b.shape}, b_hat shape: {b_hat.shape}")
+        print(b[0,0,0,:20])
+        print(b_hat[0,0,0,:20])
+        print(np.mean(np.abs(b-b_hat)**2))
 
-        ebno_dbs=list(np.arange(-5, 20, 4.0))
+        # ebno_dbs=list(np.arange(-5, 20, 4.0))
 
-        ber, bler = sim_ber(self.phy_model,
-                            ebno_dbs=ebno_dbs,
-                            batch_size=self.batch_size,
-                            max_mc_iter=100,
-                            num_target_block_errors=1000,
-                            target_bler=1e-3)
-        print(f"BER: {ber}, BLER: {bler}")
+        # ber, bler = sim_ber(self.phy_model,
+        #                     ebno_dbs=ebno_dbs,
+        #                     batch_size=self.batch_size,
+        #                     max_mc_iter=100,
+        #                     num_target_block_errors=1000,
+        #                     target_bler=1e-3)
+        # print(f"BER: {ber}, BLER: {bler}")
 
 
 
@@ -587,8 +622,7 @@ if __name__ == "__main__":
     sionna.phy.config.seed = 42
 
     # Simulate paths
-    sim = Sim(nue=8, dist_range=np.array([20, 1000]), target_n_cirs=5)
-    sim.create_cir_dataset()
+    sim = Sim(nue=8, dist_range=np.array([1500, 2000]), target_n_cirs=5, load_cir_dataset=False)
     sim.run_simulation()
 
 

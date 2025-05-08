@@ -158,6 +158,8 @@ class MIMO_OFDM(Block):
                 direction = "uplink",
                 cdl_model = "A",
                 channel_model = None,
+                normalize_channel = False,
+                channel_add_awgn = False,
                 delay_spread = 100e-9,
                 perfect_csi = True,
                 speed = 0.0,
@@ -190,6 +192,8 @@ class MIMO_OFDM(Block):
         self._direction = direction
         self._cdl_model = cdl_model
         self._channel_model = channel_model
+        self._normalize_channel = normalize_channel
+        self._channel_add_awgn = channel_add_awgn
         self._delay_spread = delay_spread
         self._perfect_csi = perfect_csi
         self._speed = speed
@@ -311,8 +315,8 @@ class MIMO_OFDM(Block):
         self._remove_nulled_scs = RemoveNulledSubcarriers(self._rg)
 
         if self._channel_model is not None:
-            self._ofdm_channel = OFDMChannel(self._channel_model, self._rg, add_awgn=True,
-                                            normalize_channel=True, return_channel=True)
+            self._ofdm_channel = OFDMChannel(self._channel_model, self._rg, add_awgn=self._channel_add_awgn,
+                                            normalize_channel=self._normalize_channel, return_channel=True)
         else:
             self._ofdm_channel = None
 
