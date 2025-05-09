@@ -1,23 +1,14 @@
 # mimo_sim.py:  Simulation of the long-term beamforming and short-term spatial equalization for a gNB with multiple UEs
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from salsa_mimo_ofdm import MIMO_OFDM, CIRGenerator
-
-# We reload the nonlin module to avoid re-running the code in it
-# when we are in the interactive mode (e.g. Jupyter notebook).
-import importlib
-import sys
-if 'miutils' not in sys.modules:
-    import miutils 
-else:
-    importlib.reload(miutils)
+from SigProc_Comm.general import General
+from salsa_mimo import MIMO_OFDM, CIRGenerator
 from miutils import CoverageMapPlanner
 
 
 
 
-
-class Sim(object):
+class SALSA_RT(General):
     """
     Main simulation object that performs one drop of the simulation:
      * A gNB is placed in the region 
@@ -32,20 +23,43 @@ class Sim(object):
     """
     def __init__(self,
                  gnb_pos : np.ndarray = None, 
+                 gnb_height_above_ground: float = 40,
+                 ue_height_above_ground: float = 1.5,
                  dist_range : np.ndarray =None, 
-                 nue : int = 4, 
-                 nsect : int = 3, 
+                 nue : int = 8, 
+                 n_gnb_sect : int = 3, 
                  nrow_gnb : int = 8,
                  ncol_gnb : int = 4,
                  nrow_ue : int = 1, 
                  ncol_ue : int = 1,
                  fc : float = 2.6e9,
-                 scs_khz : float = 120., 
-                 bw_mhz : float = 100,
+                 delay_spread : float = 100e-9,
+                 scs : float = 120.0e3,
+                 n_guard_carriers : list = [0, 0],
+                 dc_null : bool = False,
+                 pilot_pattern : str = "kronecker",
+                 pilot_ofdm_symbol_indices : list = [2, 11],
+                 cyclic_prefix_length : int = 20,
+                 perfect_csi : bool = False,
+                 direction : str = "uplink",
+                 domain : str = "freq",
+                 n_ofdm_symbols : int = 14,
+                 n_bits_per_symbol : int = 2,
+                 n_sc_rb : int = 12,
+                 n_rb : int = 69,
+                 coderate : float = 0.5,
+                #  bw : float = 100e6,
                  freq_spacing  : str = 'rb', 
+                 ptx_ue_max : float = 26,
                  snr_tgt_range : np.ndarray | None = None,
-                 target_n_cirs : int = 1,
-                 load_cir_dataset : bool = False):
+                 gnb_nf : float = 2,
+                 empty_scene : bool = False,
+                 n_cir_dataset : int = 1,
+                 batch_size : int = 1,
+                 load_cir_dataset : bool = False,
+                 compute_ber : bool = False,
+                 normalize_channel : bool = False,
+                 channel_add_awgn : bool = False):
 
         """
         Constructor 
@@ -61,7 +75,7 @@ class Sim(object):
         nue : int
             Number of UEs per base station sector to be placed 
             in the scene.  
-        nsect : int 
+        n_gnb_sect : int 
             Number of sectors to be placed in the scene.
             Default is 3. 
         nrow_gnb : int
@@ -74,10 +88,10 @@ class Sim(object):
             Number of columns in the UE array.  Default is 1.
         fc : float
             Carrier frequency in Hz.  Default is 2.6 GHz.
-        scs_khz : float
-            Subcarrier spacing in kHz.  Default is 120 kHz.
-        bw_mhz : float
-            Bandwidth in MHz.  Default is 100 MHz.
+        scs : float
+            Subcarrier spacing in Hz.  Default is 120 kHz.
+        bw : float
+            Bandwidth in Hz.  Default is 100 MHz.
         freq_spacing : str
             Frequency spacing.  Default is 'rb'.
             Options are 'rb' for resource block and 'sc' for subcarrier.
@@ -88,14 +102,15 @@ class Sim(object):
             the RX SNR is snr_per_ant_range[1] dB at the gNB, but will be lower
             if the UE does not have enough power.  If the max power is below snr_per_ant_range[0] dB,
             the UE is considered in outage.
-        target_n_cirs : int
+        n_cir_dataset : int
             Number of drops to perform.  Default is 1.
         load_cir_dataset : bool
             If True, the CIR dataset is loaded from a file.  If False, the CIR dataset is created
         """
+        super().__init__()
 
         # Set the parameters
-        self.target_n_cirs = target_n_cirs
+        self.n_cir_dataset = n_cir_dataset
         if gnb_pos is None:
             gnb_pos = np.array([0, 0])
         if dist_range is None:
@@ -103,51 +118,56 @@ class Sim(object):
         self.gnb_pos = gnb_pos
         self.dist_range = dist_range
         self.nue = nue
-        self.nsect = nsect
-        self.gnb_height_above_ground = 40
-        self.ue_height_above_ground = 1.5
+        self.n_gnb_sect = n_gnb_sect
+        self.gnb_height_above_ground = gnb_height_above_ground
+        self.ue_height_above_ground = ue_height_above_ground
         self.nrow_gnb = nrow_gnb
         self.ncol_gnb = ncol_gnb
         self.nrow_ue = nrow_ue
         self.ncol_ue = ncol_ue
         self.fc = fc
-        self.scs_khz = scs_khz
-        self.bw_mhz = bw_mhz
+        self.scs = scs
         self.load_cir_dataset = load_cir_dataset
-        self.n_ofdm_symbols = 14
+        self.n_ofdm_symbols = n_ofdm_symbols
         self.freq_spacing = freq_spacing
-        self.ptx_ue_max = 26 # max TX power in dBm
-        self.gnb_nf = 2  # gNB noise figure in dB
+        self.ptx_ue_max = ptx_ue_max # max TX power in dBm
+        self.gnb_nf = gnb_nf  # gNB noise figure in dB
         if snr_tgt_range is None:
-            snr_tgt_range = np.array([-6, 3])
+            # snr_tgt_range = np.array([-6, 3])
+            snr_tgt_range = np.array([-6, 10])
         self.snr_tgt_range = snr_tgt_range
-        self.n_bits_per_symbol = 2
-        self.coderate = 0.5
-        self.n_guard_carriers = [0, 0]
-        self.dc_null = False
-        self.pilot_pattern = "kronecker"
-        self.pilot_ofdm_symbol_indices = [2, 11]
-        self.cyclic_prefix_length = 20
-        self.perfect_csi = False
-        self.direction = "uplink"
-        self.domain = "freq"
-        self.batch_size = 2
-        self.delay_spread = 100e-9
-
-        self.nue_tot = self.nue*self.nsect
+        self.n_bits_per_symbol = n_bits_per_symbol
+        self.coderate = coderate
+        self.n_guard_carriers = n_guard_carriers
+        self.dc_null = dc_null
+        self.pilot_pattern = pilot_pattern
+        self.pilot_ofdm_symbol_indices = pilot_ofdm_symbol_indices
+        self.cyclic_prefix_length = cyclic_prefix_length
+        self.perfect_csi = perfect_csi
+        self.direction = direction
+        self.domain = domain
+        self.batch_size = batch_size
+        self.delay_spread = delay_spread
+        self.empty_scene = empty_scene
+        self.n_sc_rb= n_sc_rb
+        self.n_rb = n_rb
+        self.compute_ber = compute_ber
+        self.normalize_channel = normalize_channel
+        self.channel_add_awgn = channel_add_awgn
         
+        self.init()
 
+        
+        
+    def init(self):
         # Compute the number of RBs
-        self.nsc_rb= 12
-        self.nrb = int(self.bw_mhz*1e3 / (self.scs_khz * self.nsc_rb))
-        self.nsc = self.nrb * self.nsc_rb
-        self.bw_mhz = self.nsc * self.scs_khz / 1e3
-        self.bs_ue_association = np.zeros([self.nsect, self.nue_tot])
+        # self.n_rb = int(self.used_bw / (self.scs * self.n_sc_rb))
+        self.n_sc = self.n_rb * self.n_sc_rb
+        self.used_bw = self.n_sc * self.scs
 
-        self.empty_scene = False
-
+        self.nue_tot = self.nue*self.n_gnb_sect
         self.EkT = -174
-        self.gnb_noise_fl_db = self.EkT + 10*np.log10(self.bw_mhz*1e6) + self.gnb_nf
+        self.gnb_noise_fl_db = self.EkT + 10*np.log10(self.used_bw) + self.gnb_nf
         self.gnb_noise_fl = 10**(self.gnb_noise_fl_db/10)
 
         
@@ -208,11 +228,12 @@ class Sim(object):
         """
         
         self.ue_pos = np.zeros((self.nue_tot, 3))
+        self.bs_ue_association = np.zeros([self.n_gnb_sect, self.nue_tot])
         
         # Add the gNB receivers.  There is one RX
         # per sector
-        for s in range(self.nsect):
-            yaw = 2*np.pi*s / self.nsect
+        for s in range(self.n_gnb_sect):
+            yaw = 2*np.pi*s / self.n_gnb_sect
             rx = sionna.rt.Receiver(
                     name=f"gnb-{s}",
                     position=self.gnb_pos, 
@@ -220,7 +241,7 @@ class Sim(object):
             self.scene.add(rx)
 
             # sect_orientation = np.array([np.cos(yaw), np.sin(yaw)])
-            sect_angle_range = np.array([yaw - np.pi/self.nsect, yaw + np.pi/self.nsect])
+            sect_angle_range = np.array([yaw - np.pi/self.n_gnb_sect, yaw + np.pi/self.n_gnb_sect])
             if np.min(sect_angle_range) < -np.pi:
                 sect_angle_range += 2*np.pi
             if np.max(sect_angle_range) > np.pi:
@@ -313,11 +334,11 @@ class Sim(object):
         self.a, self.tau = self.paths.cir(out_type='tf')
 
         # Get the channel at the frequencies
-        bw = self.scs_khz*1e3*self.nsc_rb 
+        bw = self.scs*self.n_sc_rb 
         if self.freq_spacing == 'rb':
-            self.freq = tf.linspace(-0.5, 0.5, self.nrb)*bw
+            self.freq = tf.linspace(-0.5, 0.5, self.n_rb)*bw
         elif self.freq_spacing == 'sc':  
-            self.freq = tf.linspace(-0.5, 0.5, self.nsc)*bw
+            self.freq = tf.linspace(-0.5, 0.5, self.n_sc)*bw
         else:
             raise ValueError(f"freq_spacing must be 'rb' or 'sc'. Got {self.freq_spacing}.")
         tau = tf.expand_dims(self.tau, axis=0)
@@ -351,25 +372,36 @@ class Sim(object):
 
         # Create a small value so that we don't have to deal with zeros
         self.chan_gain_max = np.maximum(chan_gain_max, 1e-30)
+        # print(self.chan_gain_max)
 
         # Compute the SNR at the max TX power
         snr_max = self.ptx_ue_max + 10*np.log10(self.chan_gain_max) - self.gnb_noise_fl_db
+        # print(f"snr_max: {snr_max}")
         
         # Find users that are in outage
         self.Iout = np.where(snr_max < self.snr_tgt_range[0])[0]
         self.Iconn = np.where(snr_max >= self.snr_tgt_range[0])[0]
+        # print(f"Iconn: {self.Iconn}, Iout: {self.Iout}")
 
         # Find the power control level        
         pow_dec = np.maximum(snr_max - self.snr_tgt_range[1], 0)
+        # print(f"pow_dec: {pow_dec}")
 
         # SNR after power control
         self.snr_avg = snr_max - pow_dec
+        # print(self.snr_avg)
         self.snr_avg[self.Iout] = -np.inf
 
         # Compute the scaling on the channel so that they are scaled relative to a unit variance noise
         self.wvar = 1
-        self.chan_scale = np.zeros(self.nue_tot)
-        self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(self.snr_avg[self.Iconn]))/self.chan_gain_max[self.Iconn])
+        # self.chan_scale = np.zeros(self.nue_tot)
+        self.chan_scale = np.ones(self.nue_tot)
+        # print(self.chan_scale)
+        # self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(self.snr_avg[self.Iconn]))/self.chan_gain_max[self.Iconn])
+        self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(-pow_dec[self.Iconn])))
+        # print(self.chan_scale)
+        self.chan_scale[self.Iout] = 1.0
+        # print(self.chan_scale)
 
 
     def compute_mimo_matrix(self):
@@ -378,14 +410,14 @@ class Sim(object):
 
         Computes
 
-        H: (nsect, nrx, nue, nue_tx, nfreq)
+        H: (n_gnb_sect, nrx, nue, nue_tx, nfreq)
         """
         # Get the channel matrix for the connected UEs
         self.H = tf.gather(self.chan, self.Iconn, axis=2)
         
         # Scale the channel by the power control
         scale = self.chan_scale[self.Iconn]
-        self.H  = self.H  * scale[None, None, :, None, None ]
+        self.H = self.H * scale[None, None, :, None, None ]
 
 
     def compute_capacity_3gpp(self, snr):
@@ -466,7 +498,7 @@ class Sim(object):
 
         max_num_paths = 0
 
-        n_run = self.target_n_cirs
+        n_run = self.n_cir_dataset
         for idx in range(n_run):
             print(f"Progress: {idx+1}/{n_run}", end="\r")
 
@@ -518,7 +550,7 @@ class Sim(object):
 
         # Save self.a and self.tau for future use
         with open("cir_dataset.pkl", "wb") as f:
-            pickle.dump({"a": self.a, "tau": self.tau, "bs_ue_association": self.bs_ue_association}, f)
+            pickle.dump({"a": self.a, "tau": self.tau, "bs_ue_association": self.bs_ue_association, "chan_scale": self.chan_scale}, f)
 
 
     def create_cir_dataset(self):
@@ -531,7 +563,7 @@ class Sim(object):
         max_n_paths = self.a.shape[5]
         n_time_steps = self.a.shape[6]
 
-        self.cir_generator = CIRGenerator(self.a, self.tau)
+        self.cir_generator = CIRGenerator(self.a, self.tau, self.chan_scale)
 
         # Initialises a channel model that can be directly used by OFDMChannel layer
         self.channel_model = CIRDataset(self.cir_generator,
@@ -556,28 +588,31 @@ class Sim(object):
                 self.a = data["a"]
                 self.tau = data["tau"]
                 self.bs_ue_association = data["bs_ue_association"]
+                self.chan_scale = data["chan_scale"]
         else:
             # Create the CIR dataset from the simulation
             self.simulate_ray_tracing()
 
         self.create_cir_dataset()
 
-        self.nsc = 128 * 3
+        self.n_sc = 128 * 3
         # self.nue_tot = 16
         
         self.phy_model = MIMO_OFDM(channel_mode = "dataset",
                 domain = self.domain,
                 direction = self.direction,
                 channel_model = self.channel_model,
+                normalize_channel = self.normalize_channel,
+                channel_add_awgn = self.channel_add_awgn,
                 delay_spread = self.delay_spread,
                 perfect_csi = self.perfect_csi,
                 # cyclic_prefix_length = self.cyclic_prefix_length,
                 # pilot_ofdm_symbol_indices = self.pilot_ofdm_symbol_indices,
-                # subcarrier_spacing = self.scs_khz* 1e3,
+                # subcarrier_spacing = self.scs,
                 carrier_frequency = self.fc,
-                fft_size = self.nsc,
+                fft_size = self.n_sc,
                 # num_ofdm_symbols = self.n_ofdm_symbols,
-                num_sectors = self.nsect,
+                num_sectors = self.n_gnb_sect,
                 num_ut = self.nue_tot,
                 bs_ut_association = self.bs_ue_association,
                 num_ut_ant_row = self.nrow_ue,
@@ -593,36 +628,52 @@ class Sim(object):
 
         no = self.gnb_noise_fl
         b, b_hat = self.phy_model.call(batch_size=self.batch_size, no=no)
-        print(f"b shape: {b.shape}, b_hat shape: {b_hat.shape}")
-        print(b[0,0,0,:20])
-        print(b_hat[0,0,0,:20])
-        print(np.mean(np.abs(b-b_hat)**2))
+        x = self.phy_model.x.numpy()
+        x_hat = self.phy_model.x_hat.numpy()
 
-        # ebno_dbs=list(np.arange(-5, 20, 4.0))
+        
+        # print(np.mean(np.abs(x)**2))
+        # print(np.mean(np.abs(x_hat)**2))
+        # print(np.mean(np.abs(x-x_hat)**2))
+        # print(x_hat.shape)
+        # print(x_hat[0,0,0,:20])
+        post_eq_snr = 10*np.log10(np.mean(np.abs(x)**2)/np.mean(np.abs(x-x_hat)**2))
+        print(f"Post-equalization SNR: {post_eq_snr} dB")
+        # print(f"b shape: {b.shape}, b_hat shape: {b_hat.shape}")
+        # print(b[0,0,0,:20])
+        # print(b_hat[0,0,0,:20])
+        # print(np.mean(np.abs(b-b_hat)**2))
 
-        # ber, bler = sim_ber(self.phy_model,
-        #                     ebno_dbs=ebno_dbs,
-        #                     batch_size=self.batch_size,
-        #                     max_mc_iter=100,
-        #                     num_target_block_errors=1000,
-        #                     target_bler=1e-3)
-        # print(f"BER: {ber}, BLER: {bler}")
+
+        if self.compute_ber:
+            # Compute the BER and BLER
+            ebno_dbs=list(np.arange(-5, 20, 4.0))
+            ber, bler = sim_ber(self.phy_model,
+                                ebno_dbs=ebno_dbs,
+                                batch_size=self.batch_size,
+                                max_mc_iter=100,
+                                num_target_block_errors=1000,
+                                target_bler=1e-3)
+            print(f"BER: {ber}, BLER: {bler}")
 
 
+
+
+class SALSA_RT_alt(SALSA_RT):
+    def __init__(self, params=None):
+        super().__init__()
+        
+        self.import_attributes(params=params, overwrite=True)
+        self.init()
+        
+        
 
 
 
 
 if __name__ == "__main__":
-    # Set the random seed
-    np.random.seed(42)
-    # Set the random seed for TensorFlow
-    tf.random.set_seed(42)
-    # Set random seed for reproducibility
-    sionna.phy.config.seed = 42
-
     # Simulate paths
-    sim = Sim(nue=8, dist_range=np.array([1500, 2000]), target_n_cirs=5, load_cir_dataset=False)
+    sim = SALSA_RT()
     sim.run_simulation()
 
 

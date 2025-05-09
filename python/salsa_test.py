@@ -1,23 +1,22 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
 from salsa import SALSA_Comp
+from salsa_rt import SALSA_RT_alt
+from SigProc_Comm.general import General
 
 
 
-
-class Params_Class(object):
+class Params_Class_Default(General):
     def __init__(self):
+        super().__init__()
 
+        self.seed = 42
         self.fs = 983.04e6              # Input sample rate per antenna
+        self.fc = 2.6e9
         self.n_cc = 4                   # Number of component carriers
         self.fcc = 122.88e6             # Sample rate per component carrier fCC
-        self.n_rx = 32                  # Number RX antennas, 32-1024
-        self.n_tx = 32                  # Number TX antennas, 32-1024
-        self.l_filt = 32                # Number of filter taps in up- and down-sampling
-        self.l_match_filt = 32          # Number of filter taps in matched filter
-        self.n_filt_stages = 3          # Number of filter stages in up- and down-sampling
-        self.us_rate = 2                # Up-sampling ratio
-        self.ds_rate = 2                # Down-sampling ratio
+        self.n_rx_ant = 32              # Number RX antennas, 32-1024
+        self.n_tx_ant = 32              # Number TX antennas, 32-1024
         self.n_fft = 1024               # Number of FFT points
         self.n_sym_sf = 14              # Number of symbols per subframe
         self.t_sf = 125e-6              # Subframe duration
@@ -25,10 +24,53 @@ class Params_Class(object):
         self.n_rb = 69                  # Number of resource blocks
         self.n_sc = 828                 # Number of used subcarriers
         self.n_rs_rb = 4                # Number of reference signals per resource block TODO
+        
+        self.l_filt = 32                # Number of filter taps in up- and down-sampling
+        self.l_match_filt = 32          # Number of filter taps in matched filter
+        self.n_filt_stages = 3          # Number of filter stages in up- and down-sampling
+        self.us_rate = 2                # Up-sampling ratio
+        self.ds_rate = 2                # Down-sampling ratio
 
 
-        self.calc_params()
-        self.print_params()
+        # self.gnb_pos = None
+        self.gnb_height_above_ground = 40
+        self.ue_height_above_ground = 1.5
+        self.dist_range =np.array([20, 1000])
+        
+        self.nue = 8
+        self.n_gnb_sect = 3
+        self.nrow_gnb = 8
+        self.ncol_gnb = 4
+        self.nrow_ue = 1
+        self.ncol_ue = 1
+        self.delay_spread = 100e-9
+        self.scs = 120.0e3
+        self.n_guard_carriers = [0, 0]
+        self.dc_null = False
+        self.pilot_pattern = "kronecker"
+        self.pilot_ofdm_symbol_indices = [2, 11]
+        self.cyclic_prefix_length = 20
+        self.perfect_csi = False
+        self.direction = "uplink"
+        self.domain = "freq"
+        self.n_ofdm_symbols = 14
+        self.n_bits_per_symbol = 2
+        self.coderate = 0.5
+        self.freq_spacing = 'rb'
+        self.ptx_ue_max = 26
+        # self.snr_tgt_range = None
+        self.gnb_nf = 2
+        self.empty_scene = False
+        self.n_cir_dataset = 5
+        self.batch_size = 2
+        self.load_cir_dataset = True
+        self.compute_ber = False
+        self.normalize_channel = False
+        self.channel_add_awgn = False
+        
+        self.verbose_level = 0
+        self.plot_level = 0
+
 
 
 
@@ -37,11 +79,11 @@ class Params_Class(object):
         self.ov_samp_rate = self.fs / (self.fcc * self.n_cc)            # Oversampling rate
 
         self.t_cc = 1 / self.fcc                                        # Component carrier sample duration
-        self.f_sc = self.fcc / self.n_fft                               # Subcarrier spacing
-        self.used_bw = self.n_sc * self.f_sc                            # Used bandwidth
+        self.scs = self.fcc / self.n_fft                               # Subcarrier spacing
+        self.used_bw = self.n_sc * self.scs                            # Used bandwidth
 
         self.t_sym_total = self.t_sf / self.n_sym_sf                    # OFDM Symbol duration including CP
-        self.t_sym = 1/self.f_sc                                        # OFDM Symbol duration excluding CP
+        self.t_sym = 1/self.scs                                        # OFDM Symbol duration excluding CP
         self.t_cp = self.t_sym_total - self.t_sym                       # Cyclic prefix duration
         self.n_sym_per_sec = 1/self.t_sf * self.n_sym_sf                # Number of symbols per second
 
@@ -54,13 +96,14 @@ class Params_Class(object):
 
 
 
-    def print_params(self):
-        print("\nParameters:")
-        print("=====================================")
-        for key, value in self.__dict__.items():
-            if key[0] != "_":
-                print(f"{key}: {value}")
-        print("=====================================\n")
+
+class Params_Class(Params_Class_Default):
+    def __init__(self):
+        super().__init__()
+
+        self.calc_params()
+        self.print_params()
+
 
 
 
@@ -69,7 +112,11 @@ if __name__ == "__main__":
     params = Params_Class()
 
     # Test the SALSA_Comp class
-    salsa_comp = SALSA_Comp(params)
+    # salsa_comp = SALSA_Comp(params)
     # salsa_comp.test()
+
+    salsa_rt_sim = SALSA_RT_alt(params)
+    salsa_rt_sim.set_seed(seed=params.seed, to_set=["numpy", "tensorflow", "sionna"])
+    salsa_rt_sim.run_simulation()
 
 

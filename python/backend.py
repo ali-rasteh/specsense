@@ -127,6 +127,7 @@ if import_sionna:
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
     import sionna
+    import mitsuba as mi
 
     # Configure the notebook to use only a single GPU and allocate only as much memory as needed
     # For more details, see https://www.tensorflow.org/guide/gpu
@@ -142,8 +143,8 @@ if import_sionna:
     from sionna.rt import load_scene, Camera, Transmitter, Receiver, PlanarArray,\
                         PathSolver, RadioMapSolver
     from sionna.phy import Block
-    from sionna.phy.mimo import StreamManagement
-    from sionna.phy.ofdm import ResourceGrid, ResourceGridMapper, LSChannelEstimator, LMMSEEqualizer, \
+    from sionna.phy.mimo import StreamManagement, lmmse_equalizer
+    from sionna.phy.ofdm import ResourceGrid, ResourceGridMapper, LSChannelEstimator, LMMSEEqualizer, OFDMEqualizer, \
                             OFDMModulator, OFDMDemodulator, RZFPrecoder, RemoveNulledSubcarriers
     from sionna.phy.channel.tr38901 import Antenna, AntennaArray, UMi, UMa, RMa, CDL
     from sionna.phy.channel import gen_single_sector_topology as gen_topology

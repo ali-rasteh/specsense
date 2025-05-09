@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
-"""
-miutils.py:  Mitsuba utilities
-"""
-import re
-import mitsuba as mi
-import numpy as np
+from backend import *
+from backend import be_np as np, be_scp as scipy
+
+
+
+
 
 class CoverageMapPlanner(object):
     """
@@ -112,61 +111,62 @@ class CoverageMapPlanner(object):
         mright = np.fliplr(mright)
         self.in_region = mleft & mright
 
-def get_elevation(mi_scene, x, y):
-    """
-    Finds the elevation of the scene at the given points
 
-    Args:
-    -----
-    mi_scene: mitsuba scene
-        Scene to trace rays in
-    x, y: (npts,) and (npts,) arrays 
-        x and y coordinates 
+    def get_elevation(self, mi_scene, x, y):
+        """
+        Finds the elevation of the scene at the given points
 
-    Returns:
-    --------
-    zmin, zmax: (npts,) arrays
-        Min and max z coordinate of each point
-    """
+        Args:
+        -----
+        mi_scene: mitsuba scene
+            Scene to trace rays in
+        x, y: (npts,) and (npts,) arrays 
+            x and y coordinates 
 
-    if np.isscalar(x):
-        x = np.array([x])
-        y = np.array([y])
-        scalar = True
-    else:
-        scalar = False
+        Returns:
+        --------
+        zmin, zmax: (npts,) arrays
+            Min and max z coordinate of each point
+        """
 
-  
-    # Trace from slightly below the bottom of the scene
-    z = mi_scene.bbox().min.z-1
-    npts = x.shape[0]
-    p0 = mi.Point3f(x, y, z*np.ones(npts))
-    directions = np.zeros((3, npts))
-    directions[2,:] = 1
-    directions = mi.Vector3f(directions)
-    ray = mi.Ray3f(p0, directions)
-    si = mi_scene.ray_intersect(ray)
-    p = np.array(si.p)
-    zmin = p[2,:]
+        if np.isscalar(x):
+            x = np.array([x])
+            y = np.array([y])
+            scalar = True
+        else:
+            scalar = False
+
+    
+        # Trace from slightly below the bottom of the scene
+        z = mi_scene.bbox().min.z-1
+        npts = x.shape[0]
+        p0 = mi.Point3f(x, y, z*np.ones(npts))
+        directions = np.zeros((3, npts))
+        directions[2,:] = 1
+        directions = mi.Vector3f(directions)
+        ray = mi.Ray3f(p0, directions)
+        si = mi_scene.ray_intersect(ray)
+        p = np.array(si.p)
+        zmin = p[2,:]
 
 
-    # Trace from slightly above the top of the scene
-    z = mi_scene.bbox().max.z+1
-    p0 = mi.Point3f(x, y, z*np.ones(npts))
-    directions = np.zeros((3, npts))
-    directions[2,:] = -1
-    directions = mi.Vector3f(directions)
-    ray = mi.Ray3f(p0, directions)
-    si = mi_scene.ray_intersect(ray)
-    p = np.array(si.p)
-    zmax = p[2,:]
+        # Trace from slightly above the top of the scene
+        z = mi_scene.bbox().max.z+1
+        p0 = mi.Point3f(x, y, z*np.ones(npts))
+        directions = np.zeros((3, npts))
+        directions[2,:] = -1
+        directions = mi.Vector3f(directions)
+        ray = mi.Ray3f(p0, directions)
+        si = mi_scene.ray_intersect(ray)
+        p = np.array(si.p)
+        zmax = p[2,:]
 
-    # Convert back to scalar
-    if scalar:
-        zmin = zmin[0]
-        zmax = zmax[0]
-   
-    return zmin, zmax
-     
+        # Convert back to scalar
+        if scalar:
+            zmin = zmin[0]
+            zmax = zmax[0]
+    
+        return zmin, zmax
+        
   
         
