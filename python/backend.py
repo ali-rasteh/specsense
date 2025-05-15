@@ -144,17 +144,18 @@ if import_sionna:
                         PathSolver, RadioMapSolver
     from sionna.phy import Block
     from sionna.phy.mimo import StreamManagement, lmmse_equalizer
-    from sionna.phy.ofdm import ResourceGrid, ResourceGridMapper, LSChannelEstimator, LMMSEEqualizer, OFDMEqualizer, \
+    from sionna.phy.ofdm import ResourceGrid, ResourceGridMapper, BaseChannelEstimator, LSChannelEstimator, LMMSEEqualizer, OFDMEqualizer, \
                             OFDMModulator, OFDMDemodulator, RZFPrecoder, RemoveNulledSubcarriers
     from sionna.phy.channel.tr38901 import Antenna, AntennaArray, UMi, UMa, RMa, CDL
     from sionna.phy.channel import gen_single_sector_topology as gen_topology
     from sionna.phy.channel import subcarrier_frequencies, cir_to_ofdm_channel, cir_to_time_channel, \
                                time_lag_discrete_time_channel, ApplyOFDMChannel, ApplyTimeChannel, \
-                               OFDMChannel, TimeChannel, CIRDataset
+                               OFDMChannel, TimeChannel, CIRDataset, ChannelModel
     from sionna.phy.fec.ldpc import LDPC5GEncoder, LDPC5GDecoder
     from sionna.phy.mapping import Mapper, Demapper, BinarySource, QAMSource
-    from sionna.phy.utils import ebnodb2no, sim_ber, compute_ber
-
+    from sionna.phy.utils import ebnodb2no, sim_ber, compute_ber, flatten_dims, split_dim, flatten_last_dims,\
+                             expand_to_rank, inv_cholesky
+    
 
 if import_pynq:
     from pynq import Overlay, allocate, MMIO, Clocks, interrupt, GPIO

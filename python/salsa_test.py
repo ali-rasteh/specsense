@@ -36,6 +36,7 @@ class Params_Class_Default(General):
         self.gnb_height_above_ground = 40
         self.ue_height_above_ground = 1.5
         self.dist_range =np.array([20, 1000])
+        self.speed_range = np.array([0, 5])  # m/s
         
         self.nue = 8
         self.n_gnb_sect = 3
@@ -62,8 +63,9 @@ class Params_Class_Default(General):
         self.gnb_nf = 2
         self.empty_scene = False
         self.n_cir_dataset = 5
-        self.batch_size = 2
-        self.load_cir_dataset = True
+        self.total_sim_duration = 10e-3
+        self.batch_size = 1
+        self.load_cir_dataset = False
         self.compute_ber = False
         self.normalize_channel = False
         self.channel_add_awgn = False
@@ -93,6 +95,9 @@ class Params_Class_Default(General):
         self.n_cp = self.t_cp / self.t_sym * self.n_fft                 # Number of samples in CP
 
         self.n_rs = self.n_rb * self.n_rs_rb                            # Average number of reference signals TODO
+        
+        self.delay_resolution = self.t_sym/self.n_sc
+        self.doppler_resolution = self.scs/self.n_ofdm_symbols
 
 
 
@@ -110,7 +115,7 @@ class Params_Class(Params_Class_Default):
 
 if __name__ == "__main__":
     params = Params_Class()
-
+    
     # Test the SALSA_Comp class
     # salsa_comp = SALSA_Comp(params)
     # salsa_comp.test()

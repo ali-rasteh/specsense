@@ -3,9 +3,7 @@ from backend import be_np as np, be_scp as scipy
 
 
 
-import sionna
-from sionna.phy.utils import flatten_dims, split_dim, flatten_last_dims,\
-                             expand_to_rank, inv_cholesky
+
 class OFDMEqualizer(Block):
     # pylint: disable=line-too-long
     r"""
@@ -215,7 +213,7 @@ class OFDMEqualizer(Block):
         # [batch_size, num_rx, num_ofdm_symbols, num_effective_subcarriers,...
         #  ..., num_stream_per_rx]
         x_hat, no_eff = self._equalizer(y_dt, h_dt_desired, s)
-        print("x_hat.shape: ", x_hat.shape)
+        # print("x_hat.shape: ", x_hat.shape)
 
         ################################################
         ### Extract data symbols for all detected TX ###
@@ -325,6 +323,7 @@ class SALSA_Equalizer(OFDMEqualizer):
     """
     def __init__(self,
                  resource_grid,
+                 resource_grid_srs,
                  stream_management,
                  whiten_interference=True,
                  precision=None,
@@ -337,67 +336,192 @@ class SALSA_Equalizer(OFDMEqualizer):
                          stream_management=stream_management,
                          precision=precision, **kwargs)
         
+        self.srs_mask = tf.zeros_like(self._resource_grid.pilot_pattern.mask[0,0])
+        # self.srs_mask = tf.tensor_scatter_nd_update(self.srs_mask, [[i] for i in range(3)], tf.ones([3], dtype=self.srs_mask.dtype))
+        srs_mask_np = self.srs_mask.numpy()
+        srs_mask_np[:3] = 1.0
+        self.srs_mask = tf.convert_to_tensor(srs_mask_np)
         
-    def equalizer(self, y, h, s):
-        """Salsa equalizer"""
+        self._resource_grid_srs = resource_grid_srs
+        self.mode = "data"
         
-        # print(s.shape)
-        # print(y.shape)
-        # print(h.shape)
+        self.ltbf_list = []
         
-        pilots_mask = self._resource_grid.pilot_pattern.mask[0,0]
-        pilots_mask = tf.reshape(pilots_mask, [-1])
-        # print(pilots_mask.shape)
         
-        pilot_indices = tf.where(pilots_mask)[:,0]
-        # print(pilot_indices.shape)
+    def get_desired_channels(self, h_hat):
+        ###############################
+        ### Construct MIMO channels ###
+        ###############################
+
+        # Reshape h_hat for the construction of desired/interfering channels:
+        # [num_rx, num_tx, num_streams_per_tx, batch_size, num_rx_ant, ,...
+        #  ..., num_ofdm_symbols, num_effective_subcarriers]
+        perm = [1, 3, 4, 0, 2, 5, 6]
+        h_dt = tf.transpose(h_hat, perm)
+
+        # Flatten first tthree dimensions:
+        # [num_rx*num_tx*num_streams_per_tx, batch_size, num_rx_ant, ...
+        #  ..., num_ofdm_symbols, num_effective_subcarriers]
+        h_dt = flatten_dims(h_dt, 3, 0)
+
+        # Gather desired and undesired channels
+        ind_desired = self._stream_management.detection_desired_ind
+        ind_undesired = self._stream_management.detection_undesired_ind
+        h_dt_desired = tf.gather(h_dt, ind_desired, axis=0)
+        h_dt_undesired = tf.gather(h_dt, ind_undesired, axis=0)
+
+        # Split first dimension to separate RX and TX:
+        # [num_rx, num_streams_per_rx, batch_size, num_rx_ant, ...
+        #  ..., num_ofdm_symbols, num_effective_subcarriers]
+        h_dt_desired = split_dim(h_dt_desired,
+                                 [self._stream_management.num_rx,
+                                  self._stream_management.num_streams_per_rx],
+                                 0)
+        h_dt_undesired = split_dim(h_dt_undesired,
+                                   [self._stream_management.num_rx, -1], 0)
+
+        # Permutate dims to
+        # [batch_size, num_rx, num_ofdm_symbols, num_effective_subcarriers,..
+        #  ..., num_rx_ant, num_streams_per_rx(num_Interfering_streams_per_rx)]
+        perm = [2, 0, 4, 5, 3, 1]
+        h_dt_desired = tf.transpose(h_dt_desired, perm)
+        h_dt_desired = tf.cast(h_dt_desired, self.cdtype)
+        h_dt_undesired = tf.transpose(h_dt_undesired, perm)
         
-        h_hat = tf.reshape(h, h.shape[0:2]+(np.prod(h.shape[2:4]),)+h.shape[4:])
-        s_hat = tf.reshape(s, s.shape[0:2]+(np.prod(s.shape[2:4]),)+s.shape[4:])
-        # print(h_hat.shape)
+        return h_dt_desired, h_dt_undesired
         
-        h_hat = tf.gather(h_hat, pilot_indices, axis=2)
-        s_hat = tf.gather(s_hat, pilot_indices, axis=2)
-        # print(h_hat.shape)
-        # print(s_hat.shape)
+
+    def process_srs(self, h_hat):
+        # TODO: Change the location of each user's pilot in different srs measurements to be more accurate
         
-        h_hat = tf.transpose(h_hat, [0,1,4,3,2])
-        # print(h_hat.shape)
+        pilots = self._resource_grid_srs.pilot_pattern.pilots
+        pilots = tf.expand_dims(pilots, axis=2)
+        # pilots_indices = (pilots != 0)
+        pilots_indices = tf.where(pilots != 0)
+        # non_zero_pilots = tf.boolean_mask(pilots, pilots_indices)
+        non_zero_pilots = tf.gather_nd(pilots, pilots_indices)
+        non_zero_pilots = tf.reshape(non_zero_pilots, [pilots.shape[0], pilots.shape[1], pilots.shape[2], -1])
         
-        n_srs = tf.shape(h_hat)[-1]
-        Q_hat = tf.matmul(h_hat, h_hat, adjoint_b=True) / tf.cast(n_srs, h_hat.dtype)
-        # print(Q_hat.shape)
+        aa, bb, cc = tf.meshgrid(tf.range(h_hat.shape[0]), tf.range(h_hat.shape[1]), tf.range(h_hat.shape[2]), indexing='ij')  # each is (a, b, c)
+        indices_1 = tf.stack([aa, bb, cc], axis=-1)
+        indices_1 = tf.reshape(indices_1, (-1, 3))  # shape (a*b*c, 3)
+        indices_1 = tf.cast(indices_1, pilots_indices.dtype)
+        tiled_1 = tf.tile(indices_1[:, tf.newaxis, :], [1, len(pilots_indices), 1])
+        tiled_2 = tf.tile(pilots_indices[tf.newaxis, :, :], [tf.shape(indices_1)[0], 1, 1])
+        full_indices = tf.concat([tiled_1, tiled_2], axis=-1)
+        full_indices = tf.reshape(full_indices, (-1, len(h_hat.shape)))            
+        h_hat_ltbf = tf.gather_nd(h_hat, full_indices)
+        
+        # pilots_mask = (pilots != 0)
+        # h_hat_mask = tf.tile(pilots_mask[tf.newaxis, tf.newaxis, tf.newaxis, :, :, :, :], [h_hat.shape[0], h_hat.shape[1], h_hat.shape[2], 1, 1, 1, 1])
+        # h_hat_mask = tf.cast(h_hat_mask, pilots_mask.dtype)
+        # h_hat_ltbf = tf.boolean_mask(h_hat, h_hat_mask)
+        
+        h_hat_ltbf = tf.reshape(h_hat_ltbf, tuple(list(h_hat.shape[:-1])+[-1]))
+        h_hat_ltbf, _ = self.get_desired_channels(h_hat_ltbf)
+        self.ltbf_list.append(h_hat_ltbf)
+        
+        if len(self.ltbf_list) == 3:
+            self.calc_lt_bf()
+        
+        
+    
+    def calc_lt_bf(self, alpha=0.5):
+        
+        # print(self.ltbf_list[0].shape)
+        lbtf_data = tf.concat(self.ltbf_list, axis=3)
+        # print("lbtf_data: ", lbtf_data.shape)
+        
+        # pilots_mask = self._rg_srs.pilot_pattern.mask[0,0]
+        # pilots = self._rg_srs.pilot_pattern.pilots
+        # print("pilots: ", pilots.shape)
+        
+        # pilots_mask = tf.reshape(pilots_mask, [-1])
+        # pilot_indices = tf.where(pilots_mask)[:,0]
+        
+        lbtf_data = tf.reshape(lbtf_data, lbtf_data.shape[0:2]+(np.prod(lbtf_data.shape[2:4]),)+lbtf_data.shape[4:])
+        # s_hat = tf.reshape(s, s.shape[0:2]+(np.prod(s.shape[2:4]),)+s.shape[4:])
+        
+        # h_hat = tf.gather(h_hat, pilot_indices, axis=2)
+        # s_hat = tf.gather(s_hat, pilot_indices, axis=2)
+        
+        lbtf_data = tf.transpose(lbtf_data, [0,1,4,3,2])
+        print("lbtf_data: ", lbtf_data.shape)
+        
+        n_srs = tf.shape(lbtf_data)[-1]
+        Q_hat = tf.matmul(lbtf_data, lbtf_data, adjoint_b=True) / tf.cast(n_srs, lbtf_data.dtype)
         Q_hat = tf.reduce_sum(Q_hat, axis=[2])
-        # print(Q_hat.shape)
-        s_hat = tf.cast(tf.reduce_mean(tf.abs(s_hat), axis=[2]), Q_hat.dtype)
-        # print(tf.reduce_mean(tf.abs(s_hat)/ tf.abs(Q_hat)))
-        Q_hat = Q_hat + s_hat
+        # s_hat = tf.cast(tf.reduce_mean(tf.abs(s_hat), axis=[2]), Q_hat.dtype)
+        # Q_hat = Q_hat + s_hat
+        print("Q_hat: ", Q_hat.shape)
+        Q_hat_I = tf.eye(Q_hat.shape[2])
+        Q_hat_I = tf.cast(Q_hat_I, Q_hat.dtype)
+        Q_hat = Q_hat_I + alpha * Q_hat
+        print("Q_hat: ", Q_hat.shape)
+        exit()
         
-        
-        # Step 1: Compute Q_hat^{-1/2}
+        Q_hat_inv = tf.linalg.inv(Q_hat)
         eigvals, eigvecs = tf.linalg.eigh(Q_hat)
         Q_inv_sqrt = eigvecs @ tf.linalg.diag(1.0 / tf.sqrt(eigvals)) @ tf.linalg.adjoint(eigvecs)
 
-        # Step 2: Compute Q_hat^{-1/2} * H_i_hat
-        QH = Q_inv_sqrt[:,:,None,:,:] @ h_hat
+        QH = Q_inv_sqrt[:,:,None,:,:] @ lbtf_data
+        # QH = tf.transpose(QH, [0,1,2,4,3])
+        print("QH: ", QH.shape)
 
-        # Step 3: Compute SVD
         QH_s, QH_u, QH_v = tf.linalg.svd(QH, full_matrices=False)
         # print("u.shape", QH_u.shape)
 
-        # Step 4: Take the first N_LT columns of v (right singular vectors)
         N_LT = 4
-        F_0 = QH_u[..., :N_LT]  # Equivalent to the dominant right singular vectors
-        print(F_0.shape)
-        print(y.shape)
+        F_0 = QH_u[..., :N_LT]
+        print("F_0: ", F_0.shape)
+        print("y: ", y.shape)
         
         F_0 = tf.transpose(F_0, [0,1,2,4,3])
-        y_ = tf.transpose(y, [0,1,4,2,3])
-        print(F_0.shape)
-        print(y_.shape)
         
-        z = tf.einsum('abcde,abemn->abcdmn', F_0, y_)
-        print(z.shape)
+        self.ltbf_list = []
+        
+        
+    def equalizer(self, y, h, s):
+        """Salsa equalizer"""
+        print("h: ", h.shape)
+        if self.mode == "srs":
+            # self.process_srs(h)
+            return self.last_result
+        else:
+            self.last_result = lmmse_equalizer(y, h, s, self._whiten_interference)
+            return self.last_result 
+        
+        pilots_mask = self._resource_grid.pilot_pattern.mask[0,0]
+        pilots_mask = tf.reshape(pilots_mask, [-1])
+        
+        pilot_indices = tf.where(pilots_mask)[:,0]
+        pilots = self._resource_grid.pilot_pattern.pilots      
+      
+        y_pilots = tf.reshape(y, y.shape[0:2]+(np.prod(y.shape[2:4]),)+y.shape[4:])
+        y_pilots = tf.gather(y_pilots, pilot_indices, axis=2)
+        
+        # y_ = tf.transpose(y, [0,1,4,2,3])
+        y_pilots = tf.transpose(y_pilots, [0,1,3,2])
+        print("F_0: ", F_0.shape)
+        print("y_pilots: ", y_pilots.shape)
+        
+        # z = tf.einsum('abcde,abemn->abcdmn', F_0, y_)
+        z = tf.einsum('abcde,abem->abcdm', F_0, y_pilots)
+        print("z: ", z.shape)
+        
+        lambda_reg = 1e-6
+        Q_2 = tf.matmul(z, z, adjoint_b=True) + lambda_reg * tf.eye(z.shape[-2], dtype=z.dtype)
+        Q_2_inv = tf.linalg.inv(Q_2)
+        print("Q_2_inv: ", Q_2_inv.shape)
+        X = tf.expand_dims(pilots, axis=0)
+        X = tf.tile(X, [z.shape[0], 1, 1, 1])
+        X = tf.reshape(X, [z.shape[0], z.shape[1], z.shape[2], X.shape[2], X.shape[3]])     # Double check the shape of pilot for different inputs
+        print("X: ", X.shape)
+        F_1 = tf.matmul(Q_2_inv, z)
+        F_1 = tf.matmul(F_1, X, adjoint_b=True)
+        print("F_1: ", F_1.shape)
+        F_1 = tf.linalg.adjoint(F_1)
+        print("F_1: ", F_1.shape)
 
         # return x_hat, no_eff
         return lmmse_equalizer(y, h, s, self._whiten_interference) 
@@ -406,7 +530,7 @@ class SALSA_Equalizer(OFDMEqualizer):
         
         
 
-class CIRGenerator:
+class SALSA_CIRGenerator:
     """Creates a generator from a given dataset of channel impulse responses
 
     The generator samples ``num_tx`` different transmitters from the given path
@@ -455,44 +579,79 @@ class CIRGenerator:
         self.batch_size = batch_size
         self.idx = 0
 
-    def __call__(self):
+    def __call__(self, batch_size=None,
+                       num_time_steps=None,
+                       sampling_frequency=None):
 
         # Generator implements an infinite loop that yields new random samples
         while True:
-            # Sample random users and stack them together
-            # idx,_,_ = tf.random.uniform_candidate_sampler(
-            #                 tf.expand_dims(tf.range(self._dataset_size, dtype=tf.int64), axis=0),
-            #                 num_true=self._dataset_size,
-            #                 num_sampled=self.batch_size,
-            #                 unique=True,
-            #                 range_max=self._dataset_size)
-
-            # a = tf.gather(self._a, idx)
-            # tau = tf.gather(self._tau, idx)
 
             a = self._a[self.idx:self.idx+self.batch_size]
             tau = self._tau[self.idx:self.idx+self.batch_size]
-            a = tf.squeeze(a, axis=0)
-            tau = tf.squeeze(tau, axis=0)
-            
+            if self.batch_size == 1:
+                a = tf.squeeze(a, axis=0)
+                tau = tf.squeeze(tau, axis=0)
+                
             if self._chan_scale is not None:
                 a = a * self._chan_scale[None, None, :, None, None, None]
-
+                
             self.idx += self.batch_size
             if self.idx >= self._dataset_size:
                 self.idx = 0
 
-            # # Transpose to remove batch dimension
-            # a = tf.transpose(a, (3,1,2,0,4,5,6))
-            # tau = tf.transpose(tau, (2,1,0,3))
-
-            # # And remove batch-dimension
-            # a = tf.squeeze(a, axis=0)
-            # tau = tf.squeeze(tau, axis=0)
-
             yield a, tau
             
 
+
+class SALSA_CIRDataset(ChannelModel):
+    def __init__(self, cir_generator, batch_size, num_rx, num_rx_ant, num_tx,
+        num_tx_ant, num_paths, num_time_steps, precision=None, **kwargs):
+        super().__init__(precision=precision, **kwargs)
+
+        self._cir_generator = cir_generator
+        self._batch_size = batch_size
+        self._num_time_steps = num_time_steps
+
+        # TensorFlow dataset
+        output_signature = (tf.TensorSpec(shape=[num_rx,
+                                                 num_rx_ant,
+                                                 num_tx,
+                                                 num_tx_ant,
+                                                 num_paths,
+                                                 num_time_steps],
+                                          dtype=self.cdtype),
+                            tf.TensorSpec(shape=[num_rx,
+                                                 num_tx,
+                                                 num_paths],
+                                          dtype=self.rdtype))
+        dataset = tf.data.Dataset.from_generator(cir_generator,
+                                            output_signature=output_signature)
+        # dataset = dataset.shuffle(32, reshuffle_each_iteration=True)
+        self._dataset = dataset.repeat(None)
+        self._batched_dataset = self._dataset.batch(batch_size)
+        # Iterator for sampling the dataset
+        self._iter = iter(self._batched_dataset)
+
+    @property
+    def batch_size(self):
+        """
+        int : Get/set batch size
+        """
+        return self._batch_size
+
+    @batch_size.setter
+    def batch_size(self, value):
+        """Set the batch size"""
+        self._batched_dataset = self._dataset.batch(value)
+        self._iter = iter(self._batched_dataset)
+        self._batch_size = value
+
+    def __call__(self, batch_size=None,
+                       num_time_steps=None,
+                       sampling_frequency=None):
+        return next(self._iter)
+    
+    
 
 
 class MIMO_OFDM(Block):
@@ -628,6 +787,7 @@ class MIMO_OFDM(Block):
         self._num_guard_carriers = num_guard_carriers
         self._pilot_pattern = pilot_pattern
         self._pilot_ofdm_symbol_indices = pilot_ofdm_symbol_indices
+        self._srs_ofdm_symbol_indices = [11, 12]
         self._num_bits_per_symbol = num_bits_per_symbol
         self._coderate = coderate
         self.bs_ut_association = bs_ut_association
@@ -661,9 +821,24 @@ class MIMO_OFDM(Block):
                                 dc_null=self._dc_null,
                                 pilot_pattern=self._pilot_pattern,
                                 pilot_ofdm_symbol_indices=self._pilot_ofdm_symbol_indices)
+        
+        self._rg_srs = ResourceGrid(num_ofdm_symbols=self._num_ofdm_symbols,
+                            fft_size=self._fft_size,
+                            subcarrier_spacing = self._subcarrier_spacing,
+                            num_tx=self._num_tx,
+                            # num_tx=1,
+                            num_streams_per_tx=self._num_streams_per_tx,
+                            # num_streams_per_tx=1,
+                            cyclic_prefix_length=self._cyclic_prefix_length,
+                            num_guard_carriers=self._num_guard_carriers,
+                            dc_null=self._dc_null,
+                            pilot_pattern=self._pilot_pattern,
+                            pilot_ofdm_symbol_indices=self._srs_ofdm_symbol_indices)
 
         self._n = int(self._rg.num_data_symbols * self._num_bits_per_symbol)
         self._k = int(self._n * self._coderate)
+        self._n_srs = int(self._rg_srs.num_data_symbols * self._num_bits_per_symbol)
+        self._k_srs = int(self._n_srs * self._coderate)
 
         # Configure antenna arrays
         self._ut_array = AntennaArray(num_rows=int(self._num_ut_ant_row/2),
@@ -681,6 +856,7 @@ class MIMO_OFDM(Block):
         #                          antenna_pattern="omni",
         #                          carrier_frequency=self._carrier_frequency)
 
+        
         self._bs_array = AntennaArray(num_rows=int(self._num_bs_ant_row/2),
                                       num_cols=int(self._num_bs_ant_col),
                                       polarization="dual",
@@ -714,52 +890,81 @@ class MIMO_OFDM(Block):
         self._binary_source = BinarySource()
         self._qam_source = QAMSource(self._num_bits_per_symbol)
         self._encoder = LDPC5GEncoder(self._k, self._n)
+        self._encoder_srs = LDPC5GEncoder(self._k_srs, self._n_srs)
         self._mapper = Mapper("qam", self._num_bits_per_symbol)
         self._rg_mapper = ResourceGridMapper(self._rg)
+        self._srs_rg_mapper = ResourceGridMapper(self._rg_srs)
 
         if self._direction == "downlink":
             self._zf_precoder = RZFPrecoder(self._rg, self._sm, return_effective_channel=True)
 
         self._ls_est = LSChannelEstimator(self._rg, interpolation_type="nn")
+        self._ls_est_srs = LSChannelEstimator(self._rg_srs, interpolation_type=None)
         # self._lmmse_equ = LMMSEEqualizer(self._rg, self._sm)
-        self._lmmse_equ = SALSA_Equalizer(self._rg, self._sm)
+        self._lmmse_equ = SALSA_Equalizer(self._rg, self._rg_srs, self._sm)
         self._demapper = Demapper("app", "qam", self._num_bits_per_symbol)
         self._decoder = LDPC5GDecoder(self._encoder, hard_out=True)
+        self._decoder_srs = LDPC5GDecoder(self._encoder_srs, hard_out=True)
         self._remove_nulled_scs = RemoveNulledSubcarriers(self._rg)
-
+        self._remove_nulled_scs_srs = RemoveNulledSubcarriers(self._rg_srs)
+        
         if self._channel_model is not None:
             self._ofdm_channel = OFDMChannel(self._channel_model, self._rg, add_awgn=self._channel_add_awgn,
                                             normalize_channel=self._normalize_channel, return_channel=True)
+            self._ofdm_channel_srs = OFDMChannel(self._channel_model, self._rg_srs, add_awgn=self._channel_add_awgn,
+                                            normalize_channel=self._normalize_channel, return_channel=True)
         else:
             self._ofdm_channel = None
-
-
-
-    # def new_topology(self, batch_size):
-    #     """Set new topology"""
-    #     topology = gen_topology(batch_size,
-    #                             self._num_ut,
-    #                             self._scenario,
-    #                             min_ut_velocity=0.0,
-    #                             max_ut_velocity=0.0)
-
-    #     self._channel_model.set_topology(*topology)
-
-
+            self._ofdm_channel_srs = None
+            
+        self.ltbf_list = []
+        
+        
 
     # @tf.function # @tf.function(jit_compile=False) # Run in graph mode. See the following guide: https://www.tensorflow.org/guide/function
-    def call(self, batch_size=1, ebno_db=3, no=None, h=None, H=None):
+    def call(self, batch_size=1, ebno_db=3, no=None, h=None, H=None, mode="data"):
         
         # self.new_topology(batch_size)
 
+        if mode == "data":
+            _rg = self._rg
+            _rg_mapper = self._rg_mapper
+            _n = self._n
+            _k = self._k
+            _num_tx = self._num_tx
+            _num_streams_per_tx = self._num_streams_per_tx
+            _ofdm_channel = self._ofdm_channel
+            _encoder = self._encoder
+            _decoder = self._decoder
+            _ls_est = self._ls_est
+            _remove_nulled_scs = self._remove_nulled_scs
+        elif mode == "srs":
+            _rg = self._rg_srs
+            _rg_mapper = self._srs_rg_mapper
+            _n = self._n_srs
+            _k = self._k_srs
+            # _num_tx = 1
+            _num_tx = self._num_tx
+            # _num_streams_per_tx = 1
+            _num_streams_per_tx = self._num_streams_per_tx
+            _ofdm_channel = self._ofdm_channel_srs
+            _encoder = self._encoder_srs
+            _decoder = self._decoder_srs
+            _ls_est = self._ls_est_srs
+            _remove_nulled_scs = self._remove_nulled_scs_srs
+        else:
+            raise ValueError("Invalid mode or tx_id, please use 'data' or 'srs' and tx_id < num_tx")
+            
+            
+            
         if no is None:
-            no = ebnodb2no(ebno_db, self._num_bits_per_symbol, self._coderate, self._rg)
+            no = ebnodb2no(ebno_db, self._num_bits_per_symbol, self._coderate, _rg)
         else:
             no = tf.cast(no, tf.float32)
-        b = self._binary_source([batch_size, self._num_tx, self._num_streams_per_tx, self._k])
-        c = self._encoder(b)
+        b = self._binary_source([batch_size, _num_tx, _num_streams_per_tx, _k])
+        c = _encoder(b)
         x = self._mapper(c)
-        x_rg = self._rg_mapper(x)
+        x_rg = _rg_mapper(x)
 
 
         if self._domain == "time":
@@ -768,19 +973,20 @@ class MIMO_OFDM(Block):
             if h is not None:
                 a, tau = h
             elif self._channel_mode == "cdl":
-                a, tau = self._cdl(batch_size, self._rg.num_time_samples+self._l_tot-1, self._rg.bandwidth)
+                a, tau = self._cdl(batch_size, _rg.num_time_samples+self._l_tot-1, _rg.bandwidth)
             elif self._channel_mode == "dataset":
-                a, tau = self._channel_model(batch_size, self._rg.num_time_samples+self._l_tot-1, self._rg.bandwidth)
+                a, tau = self._channel_model(batch_size, _rg.num_time_samples+self._l_tot-1, _rg.bandwidth)
+                
             else:
                 raise ValueError("Invalid channel mode. Use 'cdl' or 'dataset'.")
-            h_time = cir_to_time_channel(self._rg.bandwidth, a, tau,
+            h_time = cir_to_time_channel(_rg.bandwidth, a, tau,
                                          l_min=self._l_min, l_max=self._l_max, normalize=self._normalize_channel)
 
             # As precoding is done in the frequency domain, we need to downsample
             # the path gains `a` to the OFDM symbol rate prior to converting the CIR
             # to the channel frequency response.
-            a_freq = a[...,self._rg.cyclic_prefix_length:-1:(self._rg.fft_size+self._rg.cyclic_prefix_length)]
-            a_freq = a_freq[...,:self._rg.num_ofdm_symbols]
+            a_freq = a[...,_rg.cyclic_prefix_length:-1:(_rg.fft_size+_rg.cyclic_prefix_length)]
+            a_freq = a_freq[...,:_rg.num_ofdm_symbols]
             h_freq = cir_to_ofdm_channel(self._frequencies, a_freq, tau, normalize=self._normalize_channel)
 
             if self._direction == "downlink":
@@ -795,41 +1001,58 @@ class MIMO_OFDM(Block):
             # Frequency-domain simulations
 
             if h is not None:
-                cir = h
+                a, tau = h
             elif self._channel_mode == "cdl":
-                cir = self._cdl(batch_size, self._rg.num_ofdm_symbols, 1/self._rg.ofdm_symbol_duration)
+                a, tau = self._cdl(batch_size, _rg.num_ofdm_symbols, 1/_rg.ofdm_symbol_duration)
             elif self._channel_mode == "dataset":
-                cir = self._channel_model(batch_size, self._rg.num_ofdm_symbols, 1/self._rg.ofdm_symbol_duration)
+                a, tau = self._channel_model(batch_size, _rg.num_ofdm_symbols, 1/_rg.ofdm_symbol_duration)
+                # if mode == "srs" and tx_id is not None:
+                #     a = tf.gather(a, tx_id, axis=3)
+                #     a = tf.expand_dims(a, axis=3)
+                #     tau = tf.gather(tau, tx_id, axis=2)
+                #     tau = tf.expand_dims(tau, axis=2)
             else:
                 raise ValueError("Invalid channel mode. Use 'cdl' or 'dataset'.")
 
             if H is not None:
                 h_freq = H
             else:
-                h_freq = cir_to_ofdm_channel(self._frequencies, *cir, normalize=self._normalize_channel)
+                h_freq = cir_to_ofdm_channel(self._frequencies, a, tau, normalize=self._normalize_channel)
 
             if self._direction == "downlink":
                 x_rg, g = self._zf_precoder(x_rg, h_freq)
 
-            if self._channel_mode == "dataset" and self._ofdm_channel is not None:
-                y, h_freq = self._ofdm_channel(x_rg, no)
+            elif self._channel_mode == "dataset" and _ofdm_channel is not None:
+                if mode == "data":
+                    y, h_freq = _ofdm_channel(x_rg, no)
+                elif mode == "srs":
+                    y = self._channel_freq(x_rg, h_freq, no)
             else:
                 y = self._channel_freq(x_rg, h_freq, no)
 
 
         if self._perfect_csi:
             if self._direction == "uplink":
-                h_hat = self._remove_nulled_scs(h_freq)
+                h_hat = _remove_nulled_scs(h_freq)
             elif self._direction =="downlink":
                 h_hat = g
             err_var = 0.0
         else:
-            h_hat, err_var = self._ls_est (y, no)
+            h_hat, err_var = _ls_est (y, no)            
+            
+        if mode == "srs":
+            h_hat = tf.expand_dims(h_hat, axis=-2)
+            err_var = tf.expand_dims(err_var, axis=-2)
+            self._lmmse_equ.process_srs(h_hat)
 
+
+        # print("h_hat: ", h_hat.shape)
+        self._lmmse_equ.mode = mode
         x_hat, no_eff = self._lmmse_equ(y, h_hat, err_var, no)
-        print("x_hat.shape: ", x_hat.shape)
+        if mode == "srs":
+            return None, None
         llr = self._demapper(x_hat, no_eff)
-        b_hat = self._decoder(llr)
+        b_hat = _decoder(llr)
 
         self.b = b
         self.x = x
