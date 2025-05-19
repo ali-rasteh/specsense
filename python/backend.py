@@ -146,6 +146,7 @@ if import_sionna:
     from sionna.phy.mimo import StreamManagement, lmmse_equalizer
     from sionna.phy.ofdm import ResourceGrid, ResourceGridMapper, BaseChannelEstimator, LSChannelEstimator, LMMSEEqualizer, OFDMEqualizer, \
                             OFDMModulator, OFDMDemodulator, RZFPrecoder, RemoveNulledSubcarriers
+    from sionna.phy.ofdm.pilot_pattern import PilotPattern
     from sionna.phy.channel.tr38901 import Antenna, AntennaArray, UMi, UMa, RMa, CDL
     from sionna.phy.channel import gen_single_sector_topology as gen_topology
     from sionna.phy.channel import subcarrier_frequencies, cir_to_ofdm_channel, cir_to_time_channel, \

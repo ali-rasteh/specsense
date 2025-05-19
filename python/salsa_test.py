@@ -9,6 +9,8 @@ from SigProc_Comm.general import General
 class Params_Class_Default(General):
     def __init__(self):
         super().__init__()
+        
+        # TODO: Complete the parameters
 
         self.seed = 42
         self.fs = 983.04e6              # Input sample rate per antenna
@@ -35,11 +37,14 @@ class Params_Class_Default(General):
         # self.gnb_pos = None
         self.gnb_height_above_ground = 40
         self.ue_height_above_ground = 1.5
-        self.dist_range =np.array([20, 1000])
-        self.speed_range = np.array([0, 5])  # m/s
+        # self.dist_range =np.array([20, 1000])
+        self.dist_range =np.array([20, 100])
+        # self.speed_range = np.array([0, 5])  # m/s
+        self.speed_range = np.array([0, 0])  # m/s
+        self.control_rx_power = False
         
         self.nue = 8
-        self.n_gnb_sect = 3
+        self.n_gnb_sect = 1
         self.nrow_gnb = 8
         self.ncol_gnb = 4
         self.nrow_ue = 1
@@ -116,12 +121,13 @@ class Params_Class(Params_Class_Default):
 if __name__ == "__main__":
     params = Params_Class()
     
+    salsa_rt_sim = SALSA_RT_alt(params)
+    salsa_rt_sim.set_seed(seed=params.seed, to_set=["numpy", "tensorflow", "sionna"])
+    salsa_rt_sim.run_simulation()
+    
     # Test the SALSA_Comp class
     # salsa_comp = SALSA_Comp(params)
     # salsa_comp.test()
 
-    salsa_rt_sim = SALSA_RT_alt(params)
-    salsa_rt_sim.set_seed(seed=params.seed, to_set=["numpy", "tensorflow", "sionna"])
-    salsa_rt_sim.run_simulation()
 
 

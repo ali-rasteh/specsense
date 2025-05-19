@@ -14,12 +14,6 @@ class SALSA_RT(General):
      * A gNB is placed in the region 
      * A number of UEs are placed in the region
      * Channels are computed between the gNB and the UEs
-    
-     TODO: 
-     * Compute the MU-MIMO post-equalization SNR.  
-     First, we should compute the baseline capacity assuming the channel is perfectly known and we can perform
-     the complete equalization.  
-     * Create a loop so that we can run multiple drops of the UEs and then aggregate the channels
     """
     def __init__(self,
                  gnb_pos : np.ndarray = None, 
@@ -62,7 +56,13 @@ class SALSA_RT(General):
                  load_cir_dataset : bool = False,
                  compute_ber : bool = False,
                  normalize_channel : bool = False,
-                 channel_add_awgn : bool = False):
+                 channel_add_awgn : bool = False,
+                 srs_period : float = 5e-3,
+                 n_srs_meas : int = 8,
+                 scene_bbox : np.ndarray = None,
+                 scene_path : str = None,
+                 control_rx_power : bool = False,
+                 ):
 
         """
         Constructor 
@@ -117,12 +117,12 @@ class SALSA_RT(General):
         self.total_sim_duration = total_sim_duration
         if gnb_pos is None:
             gnb_pos = np.array([0, 0])
+        self.gnb_pos = gnb_pos
         if dist_range is None:
             dist_range = np.array([20, 2000])
+        self.dist_range = dist_range
         if speed_range is None:
             speed_range = np.array([0, 0])
-        self.gnb_pos = gnb_pos
-        self.dist_range = dist_range
         self.speed_range = speed_range
         self.nue = nue
         self.n_gnb_sect = n_gnb_sect
@@ -162,17 +162,35 @@ class SALSA_RT(General):
         self.compute_ber = compute_ber
         self.normalize_channel = normalize_channel
         self.channel_add_awgn = channel_add_awgn
-        self.srs_period = 5e-3
-        self.n_srs_meas = 8
+        self.srs_period = srs_period
+        self.n_srs_meas = n_srs_meas
+        if scene_bbox is None:
+            # Set a bounding box in the center bbox = [xmin, xmax, ymin, ymax]
+            L_NS = 3700
+            W_WE = 2900
+            scene_bbox = [-W_WE/2,W_WE/2,-L_NS/2,L_NS/2]
+        self.scene_bbox = scene_bbox
+        if scene_path is None:
+            mod_dir=os.path.dirname(os.path.abspath(__file__))
+            scene_path=os.path.join(mod_dir, "Denver/denver.xml")
+        self.scene_path = scene_path
+        self.control_rx_power = control_rx_power
+        
+        self.scene_grid_size = 10
+        
         
         self.init()
 
         
         
     def init(self):
+        # TODO: Clean this up
         # Compute the number of RBs
         # self.n_rb = int(self.used_bw / (self.scs * self.n_sc_rb))
+        
         self.n_sc = self.n_rb * self.n_sc_rb
+        self.n_sc = 64 * 3
+        
         self.used_bw = self.n_sc * self.scs
 
         self.nue_tot = self.nue*self.n_gnb_sect
@@ -185,8 +203,26 @@ class SALSA_RT(General):
         self.doppler_resolution = self.scs/self.n_ofdm_symbols
         
         self.ofdm_symbol_duration_total = self.ofdm_symbol_duration * (1+self.cyclic_prefix_length/self.n_sc)
-
         
+        # self.one_sim_duration = self.n_ofdm_symbols * self.ofdm_symbol_duration_total
+        self.one_sim_duration = self.t_sf
+        # self.n_run = self.n_cir_dataset
+        self.n_run = self.total_sim_duration / self.one_sim_duration
+        self.n_run = int(np.ceil(self.n_run))
+        
+        self.lt_bf_indices = []
+        self.srs_meas_indices = []
+        srs_i = 1
+        ltbf_i = 1
+        for i in range(self.n_run):
+            if i*self.one_sim_duration >= ltbf_i*self.srs_period:
+                self.lt_bf_indices.append(i)
+                ltbf_i += 1
+            if i*self.one_sim_duration >= srs_i*self.srs_period/self.n_srs_meas:
+                self.srs_meas_indices.append(i)
+                srs_i += 1
+
+
 
     def load_scene(self):
         """
@@ -194,19 +230,10 @@ class SALSA_RT(General):
         """
         # Load the scene
         if not self.empty_scene:
-            mod_dir=os.path.dirname(os.path.abspath(__file__))
-            scene_path=os.path.join(mod_dir, "Denver/denver.xml")
-            self.scene = load_scene(scene_path)
-        
-
-            # Set a bounding box in the center bbox = [xmin, xmax, ymin, ymax]
-            L_NS = 3700
-            W_WE = 2900
-            bbox = [-W_WE/2,W_WE/2,-L_NS/2,L_NS/2]
+            self.scene = load_scene(self.scene_path)
 
             # Create a coverage map
-            self.grid_size = 10
-            self.cm = CoverageMapPlanner(self.scene._scene, grid_size=self.grid_size)
+            self.cm = CoverageMapPlanner(self.scene._scene, grid_size=self.scene_grid_size)
             self.cm.set_grid()
             self.cm.compute_grid_attributes()
 
@@ -344,8 +371,6 @@ class SALSA_RT(General):
         )
 
         # Compute the paths
-        # TODO:  I amde the samples_per_src and max_num_paths_per_src very small to speed up the simulation
-        # Can we check this?
         solver = PathSolver()
         self.paths =  solver(
             scene=self.scene,
@@ -397,36 +422,27 @@ class SALSA_RT(General):
 
         # Create a small value so that we don't have to deal with zeros
         self.chan_gain_max = np.maximum(chan_gain_max, 1e-30)
-        # print(self.chan_gain_max)
 
         # Compute the SNR at the max TX power
         snr_max = self.ptx_ue_max + 10*np.log10(self.chan_gain_max) - self.gnb_noise_fl_db
-        # print(f"snr_max: {snr_max}")
         
         # Find users that are in outage
         self.Iout = np.where(snr_max < self.snr_tgt_range[0])[0]
         self.Iconn = np.where(snr_max >= self.snr_tgt_range[0])[0]
-        # print(f"Iconn: {self.Iconn}, Iout: {self.Iout}")
 
         # Find the power control level        
         pow_dec = np.maximum(snr_max - self.snr_tgt_range[1], 0)
-        # print(f"pow_dec: {pow_dec}")
 
         # SNR after power control
         self.snr_avg = snr_max - pow_dec
-        # print(self.snr_avg)
         self.snr_avg[self.Iout] = -np.inf
 
         # Compute the scaling on the channel so that they are scaled relative to a unit variance noise
         self.wvar = 1
-        # self.chan_scale = np.zeros(self.nue_tot)
         self.chan_scale = np.ones(self.nue_tot)
-        # print(self.chan_scale)
         # self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(self.snr_avg[self.Iconn]))/self.chan_gain_max[self.Iconn])
         self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(-pow_dec[self.Iconn])))
-        # print(self.chan_scale)
         self.chan_scale[self.Iout] = 1.0
-        # print(self.chan_scale)
 
 
     def compute_mimo_matrix(self):
@@ -468,8 +484,6 @@ class SALSA_RT(General):
         """
 
         # Compute the capacity
-        # H Shape: (nrx, nrx_ant, ntx, ntx_ant, nfreq)
-        print("H Shape: ", self.H.shape)
         H_cap = tf.reduce_mean(tf.abs(self.H)**2, axis=(1,3,4)).numpy()
         max_idx = np.argmax(H_cap, axis=0)
         H_cap = np.zeros(self.H.shape[1:], dtype=self.H.numpy().dtype)
@@ -486,7 +500,6 @@ class SALSA_RT(General):
             n_path = np.linalg.matrix_rank(H)
             alpha = 10**(0.1*self.ptx_ue_max) / n_path / self.gnb_noise_fl
             c = np.log2(np.linalg.det(np.eye(H.shape[1]) + alpha * np.abs(H.conj().T @ H)))
-            # print(f"Capacity {i}: {c}")
         
         
         
@@ -530,35 +543,14 @@ class SALSA_RT(General):
         a_list = []
         tau_list = []
 
-        # one_sim_duration = self.n_ofdm_symbols * self.ofdm_symbol_duration_total
-        one_sim_duration = self.t_sf
-
         self.load_scene()
         self.drop_users()
 
         max_num_paths = 0
-        # self.n_run = self.n_cir_dataset
-        self.n_run = self.total_sim_duration / one_sim_duration
-        self.n_run = int(np.ceil(self.n_run))
-        
-        self.lt_bf_indices = []
-        self.srs_meas_indices = []
-        srs_i = 1
-        ltbf_i = 1
-        for i in range(self.n_run):
-            if i*one_sim_duration >= ltbf_i*self.srs_period:
-                self.lt_bf_indices.append(i)
-                ltbf_i += 1
-            if i*one_sim_duration >= srs_i*self.srs_period/self.n_srs_meas:
-                self.srs_meas_indices.append(i)
-                srs_i += 1
-        
         for idx in range(self.n_run):
             print(f"Progress: {idx+1}/{self.n_run}", end="\r")
 
-            # self.load_users()
             self.ue_associate_power_control()
-            self.compute_mimo_matrix()
 
             a_list.append(self.a)
             tau_list.append(self.tau)
@@ -568,10 +560,11 @@ class SALSA_RT(General):
             if num_paths > max_num_paths:
                 max_num_paths = num_paths
                     
-            # self.plot_region()
             
-            displacement_vec = self.ue_vel * one_sim_duration
+            displacement_vec = self.ue_vel * self.one_sim_duration
             self.move_users(displacement_vec)
+            
+        self.plot_region()
             
             
         a = []
@@ -619,7 +612,12 @@ class SALSA_RT(General):
         max_n_paths = self.a.shape[5]
         n_time_steps = self.a.shape[6]
 
-        self.cir_generator = SALSA_CIRGenerator(self.a, self.tau, self.chan_scale)
+        if self.control_rx_power:
+            chan_scale = self.chan_scale
+        else:
+            chan_scale = None
+        self.cir_generator = SALSA_CIRGenerator(self.a, self.tau, chan_scale)
+        
         # Initialises a channel model that can be directly used by OFDMChannel layer
         self.channel_model = SALSA_CIRDataset(self.cir_generator,
                                 self.batch_size,
@@ -634,8 +632,6 @@ class SALSA_RT(General):
 
     def run_simulation(self):
         # Run the simulation
-
-
         if self.load_cir_dataset:
             # Load the CIR dataset from a file
             with open("cir_dataset.pkl", "rb") as f:
@@ -649,10 +645,7 @@ class SALSA_RT(General):
             self.simulate_ray_tracing()
 
         self.create_cir_dataset()
-
-        self.n_sc = 64 * 3
-        # self.nue_tot = 16
-        
+    
         self.phy_model = MIMO_OFDM(channel_mode = "dataset",
                 domain = self.domain,
                 direction = self.direction,
@@ -661,12 +654,12 @@ class SALSA_RT(General):
                 channel_add_awgn = self.channel_add_awgn,
                 delay_spread = self.delay_spread,
                 perfect_csi = self.perfect_csi,
-                # cyclic_prefix_length = self.cyclic_prefix_length,
-                # pilot_ofdm_symbol_indices = self.pilot_ofdm_symbol_indices,
-                # subcarrier_spacing = self.scs,
+                cyclic_prefix_length = self.cyclic_prefix_length,
+                pilot_ofdm_symbol_indices = self.pilot_ofdm_symbol_indices,
+                subcarrier_spacing = self.scs,
                 carrier_frequency = self.fc,
                 fft_size = self.n_sc,
-                # num_ofdm_symbols = self.n_ofdm_symbols,
+                num_ofdm_symbols = self.n_ofdm_symbols,
                 num_sectors = self.n_gnb_sect,
                 num_ut = self.nue_tot,
                 bs_ut_association = self.bs_ue_association,
@@ -676,39 +669,52 @@ class SALSA_RT(General):
                 num_bs_ant_col = self.ncol_gnb,
                 dc_null = self.dc_null,
                 num_guard_carriers = self.n_guard_carriers,
-                # pilot_pattern = self.pilot_pattern,
+                pilot_pattern = self.pilot_pattern,
                 num_bits_per_symbol = self.n_bits_per_symbol,
                 coderate = self.coderate)
         
-
         no = self.gnb_noise_fl
-        
-        
         for idx in range(self.n_run):
             if idx in self.srs_meas_indices:
                 self.phy_model.call(batch_size=self.batch_size, no=no, mode="srs")
             else:
-                b, b_hat = self.phy_model.call(batch_size=self.batch_size, no=no, mode="data")
-            # if idx in self.lt_bf_indices:
-            # if idx==10:
-            #     self.phy_model.calc_lt_bf()
+                b, b_hat = self.phy_model.call(batch_size=self.batch_size, no=no, mode="comm")
+
+            if idx in self.lt_bf_indices:
+            # if idx==15:
+                self.phy_model.calc_lt_bf()
                 
-            x = self.phy_model.x.numpy()
-            x_hat = self.phy_model.x_hat.numpy()
-            post_eq_snr = 10*np.log10(np.mean(np.abs(x)**2)/np.mean(np.abs(x-x_hat)**2))
-            print(f"Post-equalization SNR: {post_eq_snr} dB")
+            self.compute_metrics()
 
 
-            if self.compute_ber:
-                # Compute the BER and BLER
-                ebno_dbs=list(np.arange(-5, 20, 4.0))
-                ber, bler = sim_ber(self.phy_model,
-                                    ebno_dbs=ebno_dbs,
-                                    batch_size=self.batch_size,
-                                    max_mc_iter=100,
-                                    num_target_block_errors=1000,
-                                    target_bler=1e-3)
-                print(f"BER: {ber}, BLER: {bler}")
+        if self.compute_ber:
+            # Compute the BER and BLER
+            ebno_dbs=list(np.arange(-5, 20, 4.0))
+            ber, bler = sim_ber(self.phy_model,
+                                ebno_dbs=ebno_dbs,
+                                batch_size=self.batch_size,
+                                max_mc_iter=100,
+                                num_target_block_errors=1000,
+                                target_bler=1e-3)
+            print(f"BER: {ber}, BLER: {bler}")
+
+
+
+    def compute_metrics(self):
+        """
+        Compute the metrics for the simulation
+        """
+        
+        x = self.phy_model.x.numpy()
+        x_hat = self.phy_model.x_hat.numpy()
+        b = self.phy_model.b.numpy()
+        b_hat = self.phy_model.b_hat.numpy()
+        post_eq_snr = 10*np.log10(np.mean(np.abs(x)**2)/np.mean(np.abs(x-x_hat)**2))
+        print("X energy: ", np.mean(np.abs(x)**2))
+        print("X_hat energy: ", np.mean(np.abs(x_hat)**2))
+        print(f"Post-equalization SNR: {post_eq_snr} dB")
+        ber = np.mean(np.abs(b-b_hat))
+        print(f"BER: {ber}")
 
 
 
@@ -719,8 +725,6 @@ class SALSA_RT_alt(SALSA_RT):
         
         self.import_attributes(params=params, overwrite=True)
         self.init()
-        
-        
 
 
 
