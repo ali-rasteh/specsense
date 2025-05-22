@@ -1,4 +1,4 @@
 [submodule "specsense/SigProc_Comm"]
 	path = specsense/SigProc_Comm
-	url = git@github.com:ali-rasteh/SigProc_Comm.git
+	url = https://github.com/ali-rasteh/SigProc_Comm.git
 	branch = main
