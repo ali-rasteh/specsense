@@ -1,236 +1,8 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
+from salsa_eq import SALSA_Equalizer
 
 
-    
-class SALSA_Equalizer(OFDMEqualizer):
-    # pylint: disable=line-too-long
-
-    def __init__(self,
-                 resource_grid,
-                 resource_grid_srs,
-                 stream_management,
-                 whiten_interference=True,
-                 precision=None,
-                 **kwargs):
-
-        self._whiten_interference = whiten_interference
-        
-        super().__init__(equalizer=self.equalizer,
-                         resource_grid=resource_grid,
-                         stream_management=stream_management,
-                         precision=precision, **kwargs)
-        
-        self._resource_grid_srs = resource_grid_srs
-        self.mode = "comm"
-        
-        self.ltbf_list = []
-        self.G = None
-        
-        
-    def get_desired_channels(self, h_hat):
-        ###############################
-        ### Construct MIMO channels ###
-        ###############################
-
-        # Reshape h_hat for the construction of desired/interfering channels:
-        # [num_rx, num_tx, num_streams_per_tx, batch_size, num_rx_ant, ,...
-        #  ..., num_ofdm_symbols, num_effective_subcarriers]
-        perm = [1, 3, 4, 0, 2, 5, 6]
-        h_dt = tf.transpose(h_hat, perm)
-
-        # Flatten first tthree dimensions:
-        # [num_rx*num_tx*num_streams_per_tx, batch_size, num_rx_ant, ...
-        #  ..., num_ofdm_symbols, num_effective_subcarriers]
-        h_dt = flatten_dims(h_dt, 3, 0)
-
-        # Gather desired and undesired channels
-        ind_desired = self._stream_management.detection_desired_ind
-        ind_undesired = self._stream_management.detection_undesired_ind
-        h_dt_desired = tf.gather(h_dt, ind_desired, axis=0)
-        h_dt_undesired = tf.gather(h_dt, ind_undesired, axis=0)
-
-        # Split first dimension to separate RX and TX:
-        # [num_rx, num_streams_per_rx, batch_size, num_rx_ant, ...
-        #  ..., num_ofdm_symbols, num_effective_subcarriers]
-        h_dt_desired = split_dim(h_dt_desired,
-                                 [self._stream_management.num_rx,
-                                  self._stream_management.num_streams_per_rx],
-                                 0)
-        h_dt_undesired = split_dim(h_dt_undesired,
-                                   [self._stream_management.num_rx, -1], 0)
-
-        # Permutate dims to
-        # [batch_size, num_rx, num_ofdm_symbols, num_effective_subcarriers,..
-        #  ..., num_rx_ant, num_streams_per_rx(num_Interfering_streams_per_rx)]
-        perm = [2, 0, 4, 5, 3, 1]
-        h_dt_desired = tf.transpose(h_dt_desired, perm)
-        h_dt_desired = tf.cast(h_dt_desired, self.cdtype)
-        h_dt_undesired = tf.transpose(h_dt_undesired, perm)
-        
-        return h_dt_desired, h_dt_undesired
-        
-
-    def process_srs(self, h_hat):
-        # TODO: Change the location of each user's pilot in different srs measurements to be more accurate
-        
-        pilots = self._resource_grid_srs.pilot_pattern.pilots
-        pilots = tf.expand_dims(pilots, axis=2)
-        # pilots_indices = (pilots != 0)
-        pilots_indices = tf.where(pilots != 0)
-        # # non_zero_pilots = tf.boolean_mask(pilots, pilots_indices)
-        # non_zero_pilots = tf.gather_nd(pilots, pilots_indices)
-        # non_zero_pilots = tf.reshape(non_zero_pilots, [pilots.shape[0], pilots.shape[1], pilots.shape[2], -1])
-        
-        aa, bb, cc = tf.meshgrid(tf.range(h_hat.shape[0]), tf.range(h_hat.shape[1]), tf.range(h_hat.shape[2]), indexing='ij')  # each is (a, b, c)
-        indices_1 = tf.stack([aa, bb, cc], axis=-1)
-        indices_1 = tf.reshape(indices_1, (-1, 3))  # shape (a*b*c, 3)
-        indices_1 = tf.cast(indices_1, pilots_indices.dtype)
-        tiled_1 = tf.tile(indices_1[:, tf.newaxis, :], [1, len(pilots_indices), 1])
-        tiled_2 = tf.tile(pilots_indices[tf.newaxis, :, :], [tf.shape(indices_1)[0], 1, 1])
-        full_indices = tf.concat([tiled_1, tiled_2], axis=-1)
-        full_indices = tf.reshape(full_indices, (-1, len(h_hat.shape)))
-        h_hat_ltbf = tf.gather_nd(h_hat, full_indices)
-        
-        # pilots_mask = (pilots != 0)
-        # h_hat_mask = tf.tile(pilots_mask[tf.newaxis, tf.newaxis, tf.newaxis, :, :, :, :], [h_hat.shape[0], h_hat.shape[1], h_hat.shape[2], 1, 1, 1, 1])
-        # h_hat_mask = tf.cast(h_hat_mask, pilots_mask.dtype)
-        # h_hat_ltbf = tf.boolean_mask(h_hat, h_hat_mask)
-        
-        h_hat_ltbf = tf.reshape(h_hat_ltbf, tuple(list(h_hat.shape[:-1])+[-1]))
-        h_hat_ltbf, _ = self.get_desired_channels(h_hat_ltbf)
-        self.ltbf_list.append(h_hat_ltbf)
-        
-    
-    
-    def calc_lt_bf(self, alpha=None):
-        # TODO: Compute alpha
-        if alpha is None:
-            alpha = 100
-        
-        ltbf_data = tf.concat(self.ltbf_list, axis=3)
-        print("ltbf_data: ", ltbf_data.shape)
-        ltbf_data = tf.reshape(ltbf_data, ltbf_data.shape[0:2]+(np.prod(ltbf_data.shape[2:4]),)+ltbf_data.shape[4:])
-        s_hat = self.s
-        s_hat = tf.cast(tf.reduce_mean(tf.abs(s_hat), axis=[2,3]), ltbf_data.dtype)
-        
-        ltbf_data = tf.transpose(ltbf_data, [0,1,4,3,2])
-        print("ltbf_data: ", ltbf_data.shape)
-        n_srs = tf.shape(ltbf_data)[-1]
-        print("n_srs: ", n_srs)
-        Q_hat = tf.matmul(ltbf_data, ltbf_data, adjoint_b=True) / tf.cast(n_srs, ltbf_data.dtype)
-        print("Q_hat: ", Q_hat.shape)
-        Q_hat = tf.reduce_sum(Q_hat, axis=[2])
-        print("Q_hat: ", Q_hat.shape)
-        Q_hat_I = tf.eye(Q_hat.shape[2])
-        Q_hat_I = tf.tile(Q_hat_I[tf.newaxis, tf.newaxis, :, :], [Q_hat.shape[0], Q_hat.shape[1], 1, 1])
-        Q_hat_I = tf.cast(Q_hat_I, Q_hat.dtype)
-        print("Q_hat_I: ", Q_hat_I.shape)
-        # Q_hat = Q_hat + s_hat
-        Q_hat = Q_hat_I + alpha * Q_hat
-        # Q_hat = alpha * Q_hat
-        
-        # TODO: Compute Q_inv with a polynomial
-        # Q_hat_inv = tf.linalg.inv(Q_hat)
-        eigvals, eigvecs = tf.linalg.eigh(Q_hat)
-        P = eigvecs @ tf.linalg.diag(1.0 / tf.sqrt(eigvals)) @ tf.linalg.adjoint(eigvecs)
-        print("P: ", P.shape)
-        print("ltbf_data: ", ltbf_data.shape)
-        # P_ = P @ P @ Q_hat
-        # print("P_.shape: ", P_.shape)
-        # print(tf.reduce_mean(tf.abs(P_ - Q_hat_I)))
-
-        HP = tf.matmul(ltbf_data, P[:,:,None,:,:], adjoint_a=True)
-        # QH = P[:,:,None,:,:] @ ltbf_data
-        print("HP: ", HP.shape)
-
-        HP_s, HP_u, HP_v = tf.linalg.svd(HP, full_matrices=False)
-
-        print("HP_v: ", HP_v.shape)
-        N_LT = 4
-        # self.F_0 = QH_u[..., :N_LT]
-        # self.F_0 = tf.transpose(self.F_0, [0,1,2,4,3])
-        self.G = HP_v[..., :N_LT, :]
-        print("G: ", self.G.shape)
-        self.G = self.G @ P[:,:,None,:,:]
-        print("G: ", self.G.shape)
-        
-        self.ltbf_list = []
-        
-        
-    def equalizer(self, y, h, s):
-        """Salsa equalizer"""
-        
-        if self.mode == "srs":
-            return self.last_result
-        else:
-            self.last_result = lmmse_equalizer(y, h, s, self._whiten_interference)
-            if self.G is None:
-                self.s = s
-                x_hat, self.no_eff = self.last_result
-                return self.last_result
-        
-            pilots_mask = self._resource_grid.pilot_pattern.mask[0,0]
-            print("pilots_mask: ", pilots_mask.shape)
-            pilots_mask = tf.reshape(pilots_mask, [-1])
-            print("pilots_mask: ", pilots_mask.shape)
-            
-            pilot_indices = tf.where(pilots_mask)[:,0]
-            print("pilot_indices: ", pilot_indices.shape)
-            # print(pilot_indices)
-            pilots = self._resource_grid.pilot_pattern.pilots
-        
-            print("y: ", y.shape)
-            y_pilots = tf.reshape(y, y.shape[0:2]+(np.prod(y.shape[2:4]),)+y.shape[4:])
-            print("y_pilots: ", y_pilots.shape)
-            y_pilots = tf.gather(y_pilots, pilot_indices, axis=2)
-            print("y_pilots: ", y_pilots.shape)
-            
-            # y_ = tf.transpose(y, [0,1,4,2,3])
-            y_pilots = tf.transpose(y_pilots, [0,1,3,2])
-            print("y_pilots: ", y_pilots.shape)
-            print("self.G: ", self.G.shape)
-            
-            
-            # z = tf.einsum('abcde,abemn->abcdmn', F_0, y_)
-            z = tf.einsum('abcde,abem->abcdm', self.G, y_pilots)
-            print("z: ", z.shape)
-            
-            lambda_reg = 1e-6
-            Q_2 = tf.matmul(z, z, adjoint_b=True) + lambda_reg * tf.eye(z.shape[-2], dtype=z.dtype)
-            Q_2_inv = tf.linalg.inv(Q_2)
-            print("Q_2_inv: ", Q_2_inv.shape)
-            print("pilots: ", pilots.shape)
-            X = tf.expand_dims(pilots, axis=0)
-            X = tf.tile(X, [z.shape[0], 1, 1, 1])
-            X = tf.reshape(X, [z.shape[0], z.shape[1], z.shape[2], X.shape[2], X.shape[3]])     # Double check the shape of pilot for different inputs
-            print("X: ", X.shape)
-            self.F_1 = tf.matmul(Q_2_inv, z)
-            self.F_1 = tf.matmul(self.F_1, X, adjoint_b=True)
-            print("self.F_1: ", self.F_1.shape)
-            self.F_1 = tf.linalg.adjoint(self.F_1)
-            print("self.F_1: ", self.F_1.shape)
-            print("self.G: ", self.G.shape)
-            self.F = tf.matmul(self.F_1, self.G)
-            print("self.F: ", self.F.shape)
-            
-            F_ = tf.squeeze(self.F, axis=-2)
-            print("F_: ", F_.shape)
-            F_ = tf.reshape(F_, [F_.shape[0], F_.shape[1], F_.shape[3], F_.shape[2]])
-            # F_ = tf.random.normal(F_.shape)
-            # F_ = tf.complex(F_, F_) * 1e6
-            print("F_: ", F_.shape)
-            x_hat = tf.einsum('abcd,abefc->abefd', F_, y)
-            print("x_hat: ", x_hat.shape)
-            no_eff = self.no_eff
-            # exit()
-            
-            
-            print("h: ", h.shape)
-
-            return x_hat, no_eff
-            # return lmmse_equalizer(y, h, s, self._whiten_interference) 
-        
 
 
 class SALSA_PilotPattern(PilotPattern):
@@ -511,7 +283,8 @@ class MIMO_OFDM(Block):
                 num_guard_carriers = [0,0],
                 pilot_pattern = "kronecker",
                 num_bits_per_symbol = 2,
-                coderate = 0.5
+                coderate = 0.5,
+                ue_snr = None
                 ):
         super().__init__()
 
@@ -552,6 +325,9 @@ class MIMO_OFDM(Block):
         self._num_bits_per_symbol = num_bits_per_symbol
         self._coderate = coderate
         self.bs_ut_association = bs_ut_association
+        self.ue_snr = ue_snr
+        if self.ue_snr is not None:
+            self.ue_snr = self.ue_snr.reshape(self.bs_ut_association.shape)
 
         
 
@@ -622,14 +398,12 @@ class MIMO_OFDM(Block):
         #                          antenna_pattern="omni",
         #                          carrier_frequency=self._carrier_frequency)
 
-        
         self._bs_array = AntennaArray(num_rows=int(self._num_bs_ant_row/2),
                                       num_cols=int(self._num_bs_ant_col),
                                       polarization="dual",
                                       polarization_type="cross",
                                       antenna_pattern="38.901",
                                       carrier_frequency=self._carrier_frequency)
-
 
         self._cdl = CDL(model=self._cdl_model,
                         delay_spread=self._delay_spread,
@@ -638,6 +412,7 @@ class MIMO_OFDM(Block):
                         bs_array=self._bs_array,
                         direction=self._direction,
                         min_speed=self._speed)
+
 
         self._frequencies = subcarrier_frequencies(self._rg.fft_size, self._rg.subcarrier_spacing)
 
@@ -686,7 +461,7 @@ class MIMO_OFDM(Block):
         
 
     def calc_lt_bf(self):
-        self._lmmse_equ.calc_lt_bf()
+        self._lmmse_equ.calc_lt_bf(alpha=self.ue_snr)
         
         
     # @tf.function # @tf.function(jit_compile=False) # Run in graph mode. See the following guide: https://www.tensorflow.org/guide/function
@@ -720,6 +495,8 @@ class MIMO_OFDM(Block):
             _remove_nulled_scs = self._remove_nulled_scs_srs
         else:
             raise ValueError("Invalid mode or tx_id, please use 'data' or 'srs' and tx_id < num_tx")
+        # _encoder = None
+        # _decoder = None
             
             
             
@@ -728,7 +505,10 @@ class MIMO_OFDM(Block):
         else:
             no = tf.cast(no, tf.float32)
         b = self._binary_source([batch_size, _num_tx, _num_streams_per_tx, _k])
-        c = _encoder(b)
+        if _encoder is not None:
+            c = _encoder(b)
+        else:
+            c = b
         x = self._mapper(c)
         x_rg = _rg_mapper(x)
 
@@ -807,23 +587,28 @@ class MIMO_OFDM(Block):
             self._lmmse_equ.process_srs(h_hat)
 
 
+
         self._lmmse_equ.mode = mode
         x_hat, no_eff = self._lmmse_equ(y, h_hat, err_var, no)
+        # scale = tf.sqrt(tf.reduce_mean(tf.abs(x)**2)) / tf.sqrt(tf.reduce_mean(tf.abs(x_hat)**2))
+        # scale = tf.cast(scale, )
+        # x_hat = x_hat * 
+        
+        
         if mode == "srs":
-            return None, None
+            return
         llr = self._demapper(x_hat, no_eff)
-        b_hat = _decoder(llr)
-
+        if _decoder is not None:
+            b_hat = _decoder(llr)
+        else:
+            b_hat = llr
+        
         self.b = b
         self.x = x
         self.x_rg = x_rg
         self.y = y
         self.x_hat = x_hat
         self.b_hat = b_hat
-
-        self.h_hat = h_hat
-        self.h_freq = h_freq
-        self.no_eff = no_eff
 
         return b, b_hat
     

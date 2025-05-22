@@ -46,8 +46,8 @@ class SALSA_RT(General):
                  coderate : float = 0.5,
                 #  bw : float = 100e6,
                  freq_spacing  : str = 'rb', 
-                 ptx_ue_max : float = 26,
-                 snr_tgt_range : np.ndarray | None = None,
+                 ptx_ue_max_db : float = 26,
+                 snr_tgt_range_db : np.ndarray | None = None,
                  gnb_nf : float = 2,
                  empty_scene : bool = False,
                  n_cir_dataset : int = 1,
@@ -99,7 +99,7 @@ class SALSA_RT(General):
             Frequency spacing.  Default is 'rb'.
             Options are 'rb' for resource block and 'sc' for subcarrier.
             If 'rb', the frequency spacing is set to the resource block size.
-        snr_tgt_range : (2,) array-like or None
+        snr_tgt_range_db : (2,) array-like or None
             SNR per antenna range in dB.  Default is [-6, 3].
             Ths is used to compute the uplink power control.  The power is ideally so that
             the RX SNR is snr_per_ant_range[1] dB at the gNB, but will be lower
@@ -138,12 +138,12 @@ class SALSA_RT(General):
         self.scs = scs
         self.n_ofdm_symbols = n_ofdm_symbols
         self.freq_spacing = freq_spacing
-        self.ptx_ue_max = ptx_ue_max # max TX power in dBm
+        self.ptx_ue_max_db = ptx_ue_max_db # max TX power in dBm
         self.gnb_nf = gnb_nf  # gNB noise figure in dB
-        if snr_tgt_range is None:
-            # snr_tgt_range = np.array([-6, 3])
-            snr_tgt_range = np.array([-6, 10])
-        self.snr_tgt_range = snr_tgt_range
+        if snr_tgt_range_db is None:
+            # snr_tgt_range_db = np.array([-6, 3])
+            snr_tgt_range_db = np.array([-6, 10])
+        self.snr_tgt_range_db = snr_tgt_range_db
         self.n_bits_per_symbol = n_bits_per_symbol
         self.coderate = coderate
         self.n_guard_carriers = n_guard_carriers
@@ -197,6 +197,7 @@ class SALSA_RT(General):
         self.EkT = -174
         self.gnb_noise_fl_db = self.EkT + 10*np.log10(self.used_bw) + self.gnb_nf
         self.gnb_noise_fl = 10**(self.gnb_noise_fl_db/10)
+        self.ue_noise_fl = self.gnb_noise_fl
         
         self.ofdm_symbol_duration = 1/self.scs
         self.delay_resolution = self.ofdm_symbol_duration/self.n_sc
@@ -424,25 +425,34 @@ class SALSA_RT(General):
         self.chan_gain_max = np.maximum(chan_gain_max, 1e-30)
 
         # Compute the SNR at the max TX power
-        snr_max = self.ptx_ue_max + 10*np.log10(self.chan_gain_max) - self.gnb_noise_fl_db
+        snr_max_db = self.ptx_ue_max_db + 10*np.log10(self.chan_gain_max) - self.gnb_noise_fl_db
         
         # Find users that are in outage
-        self.Iout = np.where(snr_max < self.snr_tgt_range[0])[0]
-        self.Iconn = np.where(snr_max >= self.snr_tgt_range[0])[0]
+        self.Iout = np.where(snr_max_db < self.snr_tgt_range_db[0])[0]
+        self.Iconn = np.where(snr_max_db >= self.snr_tgt_range_db[0])[0]
 
         # Find the power control level        
-        pow_dec = np.maximum(snr_max - self.snr_tgt_range[1], 0)
+        pow_dec_db = np.maximum(snr_max_db - self.snr_tgt_range_db[1], 0)
 
         # SNR after power control
-        self.snr_avg = snr_max - pow_dec
-        self.snr_avg[self.Iout] = -np.inf
+        self.snr_avg_db = snr_max_db - pow_dec_db
+        self.snr_avg_db[self.Iout] = -np.inf
 
         # Compute the scaling on the channel so that they are scaled relative to a unit variance noise
-        self.wvar = 1
+        # self.wvar = 1
         self.chan_scale = np.ones(self.nue_tot)
-        # self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(self.snr_avg[self.Iconn]))/self.chan_gain_max[self.Iconn])
-        self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(-pow_dec[self.Iconn])))
+        # self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(self.snr_avg_db[self.Iconn]))/self.chan_gain_max[self.Iconn])
+        self.chan_scale[self.Iconn] = np.sqrt(10**(0.1*(-pow_dec_db[self.Iconn])))
         self.chan_scale[self.Iout] = 1.0
+        
+        self.ue_power = np.zeros(self.nue_tot)
+        self.ue_snr = np.zeros(self.nue_tot)
+        self.ue_power[self.Iconn] = 10**(0.1*(self.ptx_ue_max_db - pow_dec_db[self.Iconn]))
+        self.ue_power[self.Iout] = 10**(0.1*self.ptx_ue_max_db)
+        
+        # self.ue_snr = self.ue_power / self.ue_noise_fl
+        self.ue_snr = 10**(0.1*self.snr_avg_db) / self.chan_gain_max
+        
 
 
     def compute_mimo_matrix(self):
@@ -498,7 +508,7 @@ class SALSA_RT(General):
         for i in range(H_cap.shape[1]):
             H = H_cap[:, i, :]
             n_path = np.linalg.matrix_rank(H)
-            alpha = 10**(0.1*self.ptx_ue_max) / n_path / self.gnb_noise_fl
+            alpha = 10**(0.1*self.ptx_ue_max_db) / n_path / self.gnb_noise_fl
             c = np.log2(np.linalg.det(np.eye(H.shape[1]) + alpha * np.abs(H.conj().T @ H)))
         
         
@@ -671,7 +681,9 @@ class SALSA_RT(General):
                 num_guard_carriers = self.n_guard_carriers,
                 pilot_pattern = self.pilot_pattern,
                 num_bits_per_symbol = self.n_bits_per_symbol,
-                coderate = self.coderate)
+                coderate = self.coderate,
+                ue_snr = self.ue_snr
+                )
         
         no = self.gnb_noise_fl
         for idx in range(self.n_run):
@@ -680,8 +692,8 @@ class SALSA_RT(General):
             else:
                 b, b_hat = self.phy_model.call(batch_size=self.batch_size, no=no, mode="comm")
 
-            if idx in self.lt_bf_indices:
-            # if idx==15:
+            # if idx in self.lt_bf_indices:
+            if idx==15:
                 self.phy_model.calc_lt_bf()
                 
             self.compute_metrics()
@@ -707,8 +719,10 @@ class SALSA_RT(General):
         
         x = self.phy_model.x.numpy()
         x_hat = self.phy_model.x_hat.numpy()
+        print(x.shape)
         b = self.phy_model.b.numpy()
         b_hat = self.phy_model.b_hat.numpy()
+        # print(x_hat[0,0,0,:])
         post_eq_snr = 10*np.log10(np.mean(np.abs(x)**2)/np.mean(np.abs(x-x_hat)**2))
         print("X energy: ", np.mean(np.abs(x)**2))
         print("X_hat energy: ", np.mean(np.abs(x_hat)**2))

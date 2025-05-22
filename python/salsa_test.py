@@ -41,7 +41,7 @@ class Params_Class_Default(General):
         self.dist_range =np.array([20, 100])
         # self.speed_range = np.array([0, 5])  # m/s
         self.speed_range = np.array([0, 0])  # m/s
-        self.control_rx_power = False
+        self.control_rx_power = True
         
         self.nue = 8
         self.n_gnb_sect = 1
@@ -63,8 +63,8 @@ class Params_Class_Default(General):
         self.n_bits_per_symbol = 2
         self.coderate = 0.5
         self.freq_spacing = 'rb'
-        self.ptx_ue_max = 26
-        # self.snr_tgt_range = None
+        self.ptx_ue_max_db = 26
+        # self.snr_tgt_range_db = None
         self.gnb_nf = 2
         self.empty_scene = False
         self.n_cir_dataset = 5
