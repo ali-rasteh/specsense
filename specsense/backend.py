@@ -5,9 +5,9 @@ import_numpy=True
 import_scipy=True
 import_cupy=False
 import_cupyx=False
-import_sklearn=False
+import_sklearn=True
 import_cv2=False
-import_torch=False
+import_torch=True
 import_sionna=False
 import_pynq=False
 import_sivers=False
@@ -50,7 +50,7 @@ if import_matplotlib:
     from matplotlib.colors import LogNorm
     from matplotlib.patches import Wedge, Circle, FancyArrow
     # matplotlib.use('TkAgg')
-    matplotlib.use('WebAgg')
+    # matplotlib.use('WebAgg')
     # matplotlib.use('Agg')
     import skimage.measure as measure
 

@@ -56,6 +56,7 @@ class Params_Class(object):
         self.sw_n_sigs_max=1
         self.sw_n_sigs_p_dist=None
         # self.sw_n_sigs_p_dist=[0.1,0.9]
+        # self.sw_n_sigs_p_dist=[0.99,0.01]
         
 
         if self.ndim==1:
@@ -192,7 +193,7 @@ if __name__ == '__main__':
     # ss_det.plot_MD_vs_DoF(mode=3)
     ss_det.plot_MD_vs_DoF(mode=4)
     ss_det.plot_signals()
-    # raise SystemExit
+    params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)
 
     if params.generate_dataset:
         if params.train:
@@ -272,9 +273,6 @@ if __name__ == '__main__':
         ss_det.print("NN detection rate for signal sizes: {}\n".format({key:metrics[key]['size_NN'] for key in list(metrics.keys())}), thr=0)
         # metrics['det_rate']['size_NN'] = det_rate.copy()
 
-    if 'ml' in params.sweep_snr or 'ml' in params.sweep_size:
-        params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)
-
     if 'ml' in params.sweep_snr:
         for metric in metrics:
             metrics[metric]['snr_ML'] = {}
@@ -308,14 +306,22 @@ if __name__ == '__main__':
     if any(metrics_saved):
         ss_det.print("metrics: {}".format(metrics), thr=0)
         ss_det.save_dict_to_json(metrics, os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
-    
+
+
+    # =================================== Other results:
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
+
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_GVCz44.json'))      # 1D with IoU on all signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_rapHb5.json'))      # 2D with IoU on all signals
+
+    # =================================== Final results:
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))      # 1D with IoU only on detected signals
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX_alt.json'))  # Alternative 1D with IoU only on detected signals
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S.json'))      # 2D with IoU only on detected signals
-    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S_alt.json'))  # Alternative 2D with IoU only on detected signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_GVCz44.json'))      # 1D with IoU on all signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_rapHb5.json'))      # 2D with IoU on all signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S_alt.json'))  # Alternative 2D with IoU only on detected signals
+
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_sU7mrh.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-3
+    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_qlJgl4.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-2
 
     if params.sweep_snr:
         ss_det.plot(plot_dic=metrics, mode='snr')

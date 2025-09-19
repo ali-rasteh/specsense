@@ -147,27 +147,27 @@ class SS_Detection(Signal_Utils):
     def plot_signals(self):
         n_sigs = 1
         snr = 10
-        self.shape = tuple([1024 for _ in range(len(self.shape))])
+        shape = tuple([1024 for _ in range(len(self.shape))])
 
-        if len(self.shape)==1:
+        if len(shape)==1:
             sig_start_freq = 312
             sig_size_freq = 300
-        elif len(self.shape)==2:
+        elif len(shape)==2:
             sig_start_freq = 312
             sig_size_freq = 300
             sig_start_time = 280
             sig_size_time = 450
 
-        sig_size_min = tuple([sig_size_freq for _ in range(len(self.shape))])
+        sig_size_min = tuple([sig_size_freq for _ in range(len(shape))])
         sig_size_max = sig_size_min
 
-        regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
+        regions = self.generate_random_regions(shape=shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
         # print(regions)
-        if len(self.shape)==1:
+        if len(shape)==1:
             regions = [(slice(sig_start_freq, sig_start_freq+sig_size_freq, None),)]
-        elif len(self.shape)==2:
+        elif len(shape)==2:
             regions = [(slice(sig_start_time, sig_start_time+sig_size_time, None), slice(sig_start_freq, sig_start_freq+sig_size_freq, None))]
-        (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
+        (psd, mask) = self.generate_random_PSD(shape=shape, sig_regions=regions, n_sigs=n_sigs, n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
         psd = self.lin_to_db(psd, mode='pow')
 
         plt.figure(figsize=(8, 6))
@@ -175,7 +175,7 @@ class SS_Detection(Signal_Utils):
         ticks_size = 16
         title_size = 22
         legend_size = 18
-        if len(self.shape)==1:
+        if len(shape)==1:
             plt.plot(psd, label='PSD')
             mask *= snr
             plt.plot(mask, label='Mask', color='red', linewidth=4)
@@ -184,7 +184,7 @@ class SS_Detection(Signal_Utils):
             plt.ylabel('Power Spectral Density (dB)', fontsize=label_size)
             plt.legend(fontsize=legend_size)
             plt.title('Power Spectral Density of signal in 1D', fontsize=title_size, fontweight='bold', pad=20)
-        elif len(self.shape)==2:
+        elif len(shape)==2:
             plt.imshow(psd, aspect='auto', origin='lower', cmap='viridis')
             cbar = plt.colorbar()
             contours = measure.find_contours(mask, level=0.5)
@@ -815,11 +815,12 @@ class SS_Detection(Signal_Utils):
     def plot(self, plot_dic, mode='snr'):
         if self.plot_level<0:
             return
-        colors = ['green', 'red', 'blue', 'cyan', 'magenta', 'orange', 'purple']
+        colors = ['blue', 'red', 'green', 'cyan', 'magenta', 'orange', 'purple']
+        p_theory_plots = []
 
         for i, metric in enumerate(list(plot_dic.keys())):
-            if metric=='fa_rate':
-                continue
+            # if metric=='fa_rate':
+            #     continue
 
             fixed_param_len = len(list(plot_dic[metric][list(plot_dic[metric].keys())[0]].keys()))
             fig, axes = plt.subplots(1, fixed_param_len, figsize=(fixed_param_len*5, 5), sharey=True)
@@ -829,7 +830,7 @@ class SS_Detection(Signal_Utils):
             for j, plot_name in enumerate(list(plot_dic[metric].keys())):
                 if not mode in plot_name:
                     continue
-                if 'NN' in plot_name and metric=='missed_rate':
+                if 'NN' in plot_name and (metric in ['missed_rate', 'fa_rate']):
                     continue
                 for k, fixed_param in enumerate(list(plot_dic[metric][plot_name].keys())):
                     if type(fixed_param)==str:
@@ -837,12 +838,12 @@ class SS_Detection(Signal_Utils):
                     else:
                         fixed_param_t = fixed_param
 
-                    x = list(plot_dic[metric][plot_name][fixed_param].keys())
-                    if type(x[0])==str:
-                        x = [eval(t) for t in x]
+                    x_linear = list(plot_dic[metric][plot_name][fixed_param].keys())
+                    if type(x_linear[0])==str:
+                        x_linear = [eval(t) for t in x_linear]
 
                     if 'snr' in plot_name:
-                        x = self.lin_to_db(np.array(x))
+                        x = self.lin_to_db(np.array(x_linear))
                         param_name = 'SNR'
                         file_name = 'ss_sw_snr'
                         fixed_param_name = 'Interval Size'
@@ -850,39 +851,75 @@ class SS_Detection(Signal_Utils):
                             fixed_param_t = int(fixed_param_t)
                         except:
                             fixed_param_t = int(fixed_param_t[0])
+                        
+                        snrs = np.array(x_linear)
+                        sizes = [fixed_param_t]
                         x_label = 'SNR (dB)'
                     elif 'size' in plot_name:
                         # x = [float(eval(item)[0]) for item in list(plot_dic[metric][plot_name][fixed_param].keys())]
-                        x = np.array([float(item[0]) for item in x])
+                        x = np.array([float(item[0]) for item in x_linear])
                         param_name = 'Interval Size'
                         file_name = 'ss_sw_size'
                         fixed_param_name = 'SNR'
                         # fixed_param_t = np.round(self.lin_to_db(fixed_param_t),1)
                         fixed_param_t = fixed_param_t
+                        
+                        snrs = [fixed_param_t]
+                        sizes = np.array([float(item[0]) for item in x_linear])
                         x_label = 'Interval Size (Logarithmic)'
+                    else:
+                        raise ValueError("Invalid plot name!")
 
                     if 'ML' in plot_name:
                         if 'binary' in plot_name:
                             method = 'Binary Search'
                             color_id = 0
+                            linestyle = '-'
+                            marker = 'o'
                         else:
                             method = 'Exhaustive ML'
                             color_id = 1
+                            linestyle = '-.'
+                            marker = 's'
                     elif 'NN' in plot_name:
                         method = 'U-Net'
                         color_id = 2
+                        linestyle = ':'
+                        marker = '^'
 
                     if metric=='det_rate':
                         y_label = 'Detection IoU Error Rate (Logarithmic)'
                         metric_name = 'Detection IoU Error Rate'
+
+                        p_theory = None
+
                     elif metric=='missed_rate':
                         if method == 'U-Net':
                             continue
                         y_label = 'Missed Detection Rate (Logarithmic)'
                         metric_name = 'Missed Detection Rate'
+
+                        p_theory = []
+                        for snr in snrs:
+                            for size in sizes:
+                                l = size ** len(self.shape)
+                                if type(self.ML_thr)==float:
+                                    u_l = self.ML_thr
+                                else:
+                                    u_l = self.ML_thr['u'][l]
+                                dof = 2*l
+                                p_md = stats.chi2.cdf(2*l*u_l/(1+snr), dof)
+                                p_theory.append(p_md)
+
                     elif metric=='fa_rate':
                         y_label = 'False Alarm Rate (Logarithmic)'
                         metric_name = 'False Alarm Rate'
+
+                        p_theory = []
+                        for snr in snrs:
+                            for size in sizes:
+                                p_theory.append(self.ML_PFA)
+
 
                     y = np.array(list(plot_dic[metric][plot_name][fixed_param].values()))
                     if metric=='det_rate':
@@ -924,13 +961,20 @@ class SS_Detection(Signal_Utils):
                     y_max = max(y_max_, y_max)
 
                     if param_name=='SNR':
-                        axes[k].semilogy(x, y, 'o-', color=colors[color_id], label=method)
+                        axes[k].semilogy(x, y, color=colors[color_id], linestyle=linestyle, marker=marker, label=method, linewidth=2, markersize=6)
+                        if p_theory is not None and not (i,k) in p_theory_plots:
+                            axes[k].semilogy(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=6)
+                            p_theory_plots.append((i,k))
                     elif param_name=='Interval Size':
-                        axes[k].loglog(x, y, 'o-', color=colors[color_id], label=method)
-
-                    if all(y==0):
+                        axes[k].loglog(x, y, color=colors[color_id], linestyle=linestyle, marker=marker, label=method, linewidth=2, markersize=6)
+                        if p_theory is not None and not (i,k) in p_theory_plots:
+                            axes[k].loglog(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=6)
+                            p_theory_plots.append((i,k))
+                    if all(y==0) and not metric in ['fa_rate']:
                         # axes[k].get_shared_y_axes().remove(axes[k])
-                        axes[k].text(0.5, 0.5, 'All values are Zero', horizontalalignment='center', verticalalignment='center', transform=axes[k].transAxes, fontsize=16, fontweight='bold')
+                        axes[k].text(0.5, 0.6, 'All values are Zero', horizontalalignment='center', verticalalignment='center', transform=axes[k].transAxes, fontsize=16, fontweight='bold')
+                    elif any(y==0) and metric in ['fa_rate']:
+                        axes[k].text(0.5, 0.6, 'Some values are Zero\n and not shown', horizontalalignment='center', verticalalignment='center', transform=axes[k].transAxes, fontsize=16, fontweight='bold')
                     else:
                         # axes[k].sharey(axes[0])
                         pass
@@ -943,7 +987,7 @@ class SS_Detection(Signal_Utils):
                     axes[k].set_ylabel(y_label, fontsize=14)
                 axes[k].legend(fontsize=16)
                 axes[k].tick_params(axis='both', which='major', labelsize=16)
-                axes[k].grid(True)
+                axes[k].grid(True, linestyle=':')
                 # axes[k].set_xlim([min(x), max(x)])
                 axes[k].set_ylim([0.7*y_min, 1.5*y_max])
 

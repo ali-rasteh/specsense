@@ -165,14 +165,13 @@ cython_debug/
 desktop.ini
 
 # Other files and folders
-python/arxiv/other/
-python/data
-python/model
-python/logs
-python/other
-python/figs
+specsense/arxiv/other/
+specsense/data
+specsense/model
+specsense/logs
+specsense/other
+specsense/figs
+specsense/test.py
 matlab/other/
 env/
-python/test.py
 *.ply
-python/Denver
