@@ -11,8 +11,8 @@ import_torch=True
 class Params_Class(object):
     def __init__(self):
         self.ndim=1
-        self.sweep_snr=['', '']     # nn and ml
-        self.sweep_size=['', '']    # nn and ml
+        self.sweep_snr=['ml', '']     # nn and ml
+        self.sweep_size=['ml', '']    # nn and ml
         if self.ndim==1:
             self.n_simulations=1000
         elif self.ndim==2:
@@ -57,6 +57,9 @@ class Params_Class(object):
         self.sw_n_sigs_p_dist=None
         # self.sw_n_sigs_p_dist=[0.1,0.9]
         # self.sw_n_sigs_p_dist=[0.99,0.01]
+        self.calibrate_measurements=True        # This is for estimating the noise power from the data when assuming it is unknown
+        self.n_calibration=100                  # Number of measurements used for calibration
+        self.known_interval=True
         
 
         if self.ndim==1:
@@ -315,13 +318,19 @@ if __name__ == '__main__':
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_rapHb5.json'))      # 2D with IoU on all signals
 
     # =================================== Final results:
+    # Original tests:
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))      # 1D with IoU only on detected signals
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX_alt.json'))  # Alternative 1D with IoU only on detected signals
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S.json'))      # 2D with IoU only on detected signals
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S_alt.json'))  # Alternative 2D with IoU only on detected signals
 
+    # Tests for demonstrating False alarm rate:
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_sU7mrh.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-3
-    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_qlJgl4.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-2
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_qlJgl4.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-2
+
+    # Tests for demonstrating the calibration effect:
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_4kFKTf.json'))      # 1D with IoU only on detected signals with 100 measurements for calibration
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_4otF7I.json'))      # 1D with IoU only on detected signals with 1000 measurements for calibration
 
     if params.sweep_snr:
         ss_det.plot(plot_dic=metrics, mode='snr')

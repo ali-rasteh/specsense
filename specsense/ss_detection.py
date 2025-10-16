@@ -18,6 +18,8 @@ class SS_Detection(Signal_Utils):
         self.ML_mode = params.ML_mode
         self.n_adj_search = params.n_adj_search
         self.n_largest = params.n_largest
+        self.calibrate_measurements = params.calibrate_measurements
+        self.n_calibration = params.n_calibration
 
         self.print("Initialized Spectrum Sensing class instance.",thr=0)
 
@@ -626,6 +628,25 @@ class SS_Detection(Signal_Utils):
         return LLRs
 
 
+    def estimate_noise_var(self, snr_range=np.array([10,10]), n_measurements=10):
+        self.print("Starting to estimate the noise variance...",thr=0)
+        
+        psds = []
+        for _ in range(n_measurements):
+            n_sigs = 0
+            (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=None, n_sigs=n_sigs, 
+                                                   n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, 
+                                                   noise_power=self.noise_power, snr_range=snr_range, 
+                                                   size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, 
+                                                   mask_mode='binary')
+            psds.append(psd)
+        psds = np.array(psds)
+        noise_var_est = np.mean(psd)
+
+        self.print("Estimated noise variance: {}".format(noise_var_est),thr=0)
+        return noise_var_est
+
+
     def find_ML_thr(self, thr_coeff=1.0):
         self.print("Starting to find the optimal ML threshold...",thr=0)
         
@@ -710,6 +731,11 @@ class SS_Detection(Signal_Utils):
             metrics[metric]['ML'] = {}
             metrics[metric]['ML_binary_search'] = {}
         for snr in snrs:
+            if self.calibrate_measurements:
+                noise_power = self.estimate_noise_var(snr_range=np.array([snr, snr]), n_measurements=self.n_calibration)
+            else:
+                noise_power = self.noise_power
+
             sim_values_simple = []
             sim_values_binary = []
             for metric in metrics.keys():
@@ -721,6 +747,7 @@ class SS_Detection(Signal_Utils):
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=sig_size_min, max_size=sig_size_max, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=np.array([snr,snr]), size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
+                psd = psd/noise_power
                 (S_ML_simple, llr_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
                 (S_ML_bianry, llr_max) = self.ML_detector_binary_search_2(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
                 # if S_ML_1 != S_ML or np.round(llr_max,3)!=np.round(llr_max_1,3):
@@ -763,7 +790,12 @@ class SS_Detection(Signal_Utils):
     
     def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, snr_range=np.array([10,10])):
         self.print("Starting to sweep ML detector on Signal sizes for n_sigs:{}={}, snr_range:{}...".format(n_sigs_min, n_sigs_max, snr_range))
-        
+
+        if self.calibrate_measurements:
+            noise_power = self.estimate_noise_var(snr_range=snr_range, n_measurements=self.n_calibration)
+        else:
+            noise_power = self.noise_power
+
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         metrics = {"det_rate": {}, "missed_rate": {}, "fa_rate": {}}
         for metric in metrics.keys():
@@ -783,6 +815,7 @@ class SS_Detection(Signal_Utils):
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
                 regions = self.generate_random_regions(shape=self.shape, n_regions=n_sigs, min_size=size, max_size=size, size_sam_mode=self.size_sam_mode)
                 (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=regions, n_sigs=n_sigs_min, n_sigs_max=n_sigs_max, sig_size_min=None, sig_size_max=None, noise_power=self.noise_power, snr_range=snr_range, size_sam_mode=self.size_sam_mode, snr_sam_mode=self.snr_sam_mode, mask_mode='binary')
+                psd = psd/noise_power
                 (S_ML_simple, llr_max) = self.ML_detector_efficient(psd, thr=self.ML_thr, mode=self.ML_mode)
                 (S_ML_bianry, llr_max) = self.ML_detector_binary_search_2(psd, n_adj_search=self.n_adj_search, n_largest=self.n_largest ,thr=self.ML_thr, mode=self.ML_mode)
                 region_gt = regions[0] if len(regions)>0 else None
