@@ -201,7 +201,8 @@ class SS_Detection(Signal_Utils):
 
         plt.tick_params(axis='both', which='major', labelsize=ticks_size)
         plt.tight_layout()
-        plt.savefig(self.figs_dir + 'psd.pdf', format='pdf')
+        # plt.savefig(self.figs_dir + 'psd.pdf', format='pdf')
+        plt.savefig(self.figs_dir + f'psd_{len(shape)}.png', format='png', dpi=300)
         plt.show()
 
 
@@ -856,7 +857,10 @@ class SS_Detection(Signal_Utils):
             #     continue
 
             fixed_param_len = len(list(plot_dic[metric][list(plot_dic[metric].keys())[0]].keys()))
+            fixed_param_len = 1
             fig, axes = plt.subplots(1, fixed_param_len, figsize=(fixed_param_len*5, 5), sharey=True)
+            if fixed_param_len==1:
+                axes = [axes]
             y_min = 0.9
             y_max = 1.0
 
@@ -865,7 +869,8 @@ class SS_Detection(Signal_Utils):
                     continue
                 if 'NN' in plot_name and (metric in ['missed_rate', 'fa_rate']):
                     continue
-                for k, fixed_param in enumerate(list(plot_dic[metric][plot_name].keys())):
+                k = 0
+                for _, fixed_param in enumerate(list(plot_dic[metric][plot_name].keys())):
                     if type(fixed_param)==str:
                         fixed_param_t = eval(fixed_param)
                     else:
@@ -884,6 +889,8 @@ class SS_Detection(Signal_Utils):
                             fixed_param_t = int(fixed_param_t)
                         except:
                             fixed_param_t = int(fixed_param_t[0])
+                        # if not fixed_param_t in [8.0]:
+                        #     continue
                         
                         snrs = np.array(x_linear)
                         sizes = [fixed_param_t]
@@ -896,6 +903,8 @@ class SS_Detection(Signal_Utils):
                         fixed_param_name = 'SNR'
                         # fixed_param_t = np.round(self.lin_to_db(fixed_param_t),1)
                         fixed_param_t = fixed_param_t
+                        # if not fixed_param_t in [5.0]:
+                        #     continue
                         
                         snrs = [fixed_param_t]
                         sizes = np.array([float(item[0]) for item in x_linear])
@@ -1013,7 +1022,9 @@ class SS_Detection(Signal_Utils):
                         pass
 
                     axes[k].set_title('{} = {}'.format(fixed_param_name, fixed_param_t), fontsize=22, fontweight='bold')
-                    
+                    k += 1
+
+
             for k, ax in enumerate(axes):
                 axes[k].set_xlabel(x_label, fontsize=18)
                 if k==0:
@@ -1027,14 +1038,54 @@ class SS_Detection(Signal_Utils):
             # fig.suptitle('{} vs {} for different {}s'.format(metric_name, param_name, fixed_param_name), fontsize=20)
             # fig.tight_layout(rect=[0, 0, 1, 0.95])
             fig.tight_layout()
-            plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')
+            # plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')
+            plt.savefig(self.figs_dir + '{}_{}.png'.format(file_name, metric), format='png', dpi=300)
             plt.show()
+
+
+    def plot_flops_comparison(self):
+        # Create a grouped chart with x-axis as "1D–1024" and "2D–128×128" and different methods labeled
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+        x = np.arange(2)  # Two categories: 1D and 2D
+        width = 0.25
+
+        # Data for each method
+        exhaustive = [5.24e6, 7.27e8]
+        unet = [4.0e7, 1.0e7]
+        binary_search = [3.75e3, 2.95e4]
+
+        # Create bars
+        bars1 = ax.bar(x - width, exhaustive, width, label='Exhaustive ML', color='#FF6F00')
+        bars2 = ax.bar(x, unet, width, label='U-Net', color='#1E90FF')
+        bars3 = ax.bar(x + width, binary_search, width, label='Binary Search', color='#57068C')
+
+        # Log scale for FLOPs
+        ax.set_title('Comparison of Computational Cost (FLOPs)', fontsize=20, weight='bold')
+        ax.set_ylabel('N FLOPs (log)', fontsize=16)
+        ax.set_xticks(x)
+        ax.set_xticklabels(['1D–1024', '2D–128×128'], fontsize=16, fontweight="bold")
+        # set y-axis tick label size
+        ax.tick_params(axis='y', labelsize=14)
+        ax.legend(fontsize=14)
+        ax.set_yscale('log')
+        ax.set_ylim(top=3e9)
+
+        # Add labels
+        for bars in [bars1, bars2, bars3]:
+            for bar in bars:
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2, height * 1.2, f"{height:.1e}",
+                        ha='center', va='bottom', fontsize=13)
+
+        plt.tight_layout()
+        plt.savefig(self.figs_dir + 'ss_flops_comparison.png', format='png', dpi=300)
+        plt.show()
 
 
 
 if __name__ == '__main__':
-    # ss_det = SS_Detection(params)
-    random_string = SS_Detection.gen_random_str(None, length=10)
-    print(random_string)
-
-
+    from ss_detection_test import Params_Class
+    params = Params_Class()
+    ss_det = SS_Detection(params)
+    ss_det.plot_flops_comparison()
