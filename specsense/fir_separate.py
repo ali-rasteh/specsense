@@ -1,6 +1,6 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from SigProc_Comm.filter_utils import Filter_Utils
+from sigcom_toolkit.filter_utils import Filter_Utils
 
 
 

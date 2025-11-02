@@ -1,6 +1,6 @@
 from backend import *
 from backend import be_np as np, be_scp as scipy
-from SigProc_Comm.signal_utils import Signal_Utils
+from sigcom_toolkit.signal_utils import Signal_Utils
 
 
 
