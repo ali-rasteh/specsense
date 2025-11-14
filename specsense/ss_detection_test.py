@@ -11,8 +11,8 @@ import_torch=True
 class Params_Class(object):
     def __init__(self):
         self.ndim=1
-        self.sweep_snr=['ml', '']     # nn and ml
-        self.sweep_size=['ml', '']    # nn and ml
+        self.sweep_snr=['', '']     # nn and ml
+        self.sweep_size=['', '']    # nn and ml
         if self.ndim==1:
             self.n_simulations=1000
         elif self.ndim==2:
@@ -59,8 +59,10 @@ class Params_Class(object):
         # self.sw_n_sigs_p_dist=[0.99,0.01]
         self.calibrate_measurements=True        # This is for estimating the noise power from the data when assuming it is unknown
         self.n_calibration=100                  # Number of measurements used for calibration
-        self.known_interval=True
-        
+        self.known_interval=False
+        self.ML_PFA=1e-6
+        self.ML_thr_mode='theoretical'    # analysis or data or static or theoretical
+
 
         if self.ndim==1:
             self.n_dataset=200000
@@ -110,8 +112,6 @@ class Params_Class(object):
         self.noise_power=1.0
         self.ML_thr_coeff=1.9
         self.ML_thr=self.ML_thr_coeff*10.0*self.noise_power
-        self.ML_PFA=1e-6
-        self.ML_thr_mode='theoretical'    # analysis or data or static or theoretical
         self.eval_smooth=1e-6
         self.train_ratio=0.8
         self.val_ratio=0.0
@@ -331,6 +331,15 @@ if __name__ == '__main__':
     # Tests for demonstrating the calibration effect:
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_4kFKTf.json'))      # 1D with IoU only on detected signals with 100 measurements for calibration
     # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_4otF7I.json'))      # 1D with IoU only on detected signals with 1000 measurements for calibration
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_XlubOK.json'))      # 2D with IoU only on detected signals with 100 measurements for calibration
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_pFH8MG.json'))      # 2D with IoU only on detected signals with 1000 measurements for calibration
+    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_calib_compare.json'))      # 1D with IoU only on detected signals comparing no calibration, 100 and 1000 measurements for calibration
+
+    # Tests for demonstrating the known interval effect:
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_pmwYdZ.json'))      # 1D with IoU only on detected signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_izUEDC.json'))      # 2D with IoU only on detected signals
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_known_interval_compare.json'))      # 1D with IoU only on detected signals comparing unknown and known interval
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_known_interval_compare.json'))      # 2D with IoU only on detected signals comparing unknown and known interval
 
     if params.sweep_snr:
         ss_det.plot(plot_dic=metrics, mode='snr')
