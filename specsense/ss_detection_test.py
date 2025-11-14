@@ -312,39 +312,41 @@ if __name__ == '__main__':
 
 
     # =================================== Other results:
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
 
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_GVCz44.json'))      # 1D with IoU on all signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_rapHb5.json'))      # 2D with IoU on all signals
+    # file_path = 'backup/metrics_1d_GVCz44.json'      # 1D with IoU on all signals
+    # file_path = 'backup/metrics_2d_rapHb5.json'      # 2D with IoU on all signals
 
-    # =================================== Final results:
+    # =================================== Final results with IoU only on detected signals:
     # Original tests:
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX.json'))      # 1D with IoU only on detected signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_3P0URX_alt.json'))  # Alternative 1D with IoU only on detected signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S.json'))      # 2D with IoU only on detected signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_B7MD3S_alt.json'))  # Alternative 2D with IoU only on detected signals
+    # file_path = 'backup/metrics_1d_3P0URX.json'      # 1D with 
+    # file_path = 'backup/metrics_1d_3P0URX_alt.json'  # Alternative 1D
+    # file_path = 'backup/metrics_2d_B7MD3S.json'      # 2D
+    # file_path = 'backup/metrics_2d_B7MD3S_alt.json'  # Alternative 2D
 
     # Tests for demonstrating False alarm rate:
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_sU7mrh.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-3
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_qlJgl4.json'))      # 1D with IoU only on detected signals, for False alarm rate 1e-2
+    # file_path = 'backup/metrics_1d_sU7mrh.json'      # 1D, for False alarm rate 1e-3
+    # file_path = 'backup/metrics_1d_qlJgl4.json'      # 1D, for False alarm rate 1e-2
 
     # Tests for demonstrating the calibration effect:
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_4kFKTf.json'))      # 1D with IoU only on detected signals with 100 measurements for calibration
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_4otF7I.json'))      # 1D with IoU only on detected signals with 1000 measurements for calibration
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_XlubOK.json'))      # 2D with IoU only on detected signals with 100 measurements for calibration
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_pFH8MG.json'))      # 2D with IoU only on detected signals with 1000 measurements for calibration
-    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_calib_compare.json'))      # 1D with IoU only on detected signals comparing no calibration, 100 and 1000 measurements for calibration
+    # file_path = 'backup/metrics_1d_4kFKTf.json'      # 1D with 100 measurements for calibration
+    # file_path = 'backup/metrics_1d_4otF7I.json'      # 1D with 1000 measurements for calibration
+    # file_path = 'backup/metrics_2d_XlubOK.json'      # 2D with 100 measurements for calibration
+    # file_path = 'backup/metrics_2d_pFH8MG.json'      # 2D with 1000 measurements for calibration
+    # file_path = 'backup/metrics_1d_calib_compare.json'      # 1D comparing no calibration, 100 and 1000 measurements for calibration
 
     # Tests for demonstrating the known interval effect:
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_pmwYdZ.json'))      # 1D with IoU only on detected signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_izUEDC.json'))      # 2D with IoU only on detected signals
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_1d_known_interval_compare.json'))      # 1D with IoU only on detected signals comparing unknown and known interval
-    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, 'backup/metrics_2d_known_interval_compare.json'))      # 2D with IoU only on detected signals comparing unknown and known interval
+    # file_path = 'backup/metrics_1d_pmwYdZ.json'      # 1D
+    # file_path = 'backup/metrics_2d_izUEDC.json'      # 2D
+    # file_path = 'backup/metrics_1d_known_interval_compare.json'      # 1D comparing unknown and known interval
+    file_path = 'backup/metrics_2d_known_interval_compare.json'      # 2D comparing unknown and known interval
+
+
+    # file_path = 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)
+    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, file_path))
+
 
     if params.sweep_snr:
         ss_det.plot(plot_dic=metrics, mode='snr')
     if params.sweep_size:
         ss_det.plot(plot_dic=metrics, mode='size')
-
-
 
