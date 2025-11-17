@@ -61,7 +61,7 @@ class Params_Class(object):
         self.calibrate_measurements=True        # This is for estimating the noise power from the data when assuming it is unknown
         self.n_calibration=100                  # Number of measurements used for calibration
         self.known_interval=False
-        self.ML_PFA=1e-2
+        self.ML_PFA=1e-6
         self.ML_thr_mode='theoretical'    # analysis or data or static or theoretical
 
 
@@ -325,7 +325,7 @@ if __name__ == '__main__':
 
     # Tests for demonstrating False alarm rate:
     # file_path = 'backup/metrics_1d_sU7mrh.json'      # 1D, for False alarm rate 1e-3
-    file_path = 'backup/metrics_1d_qlJgl4.json'      # 1D, for False alarm rate 1e-2
+    # file_path = 'backup/metrics_1d_qlJgl4.json'      # 1D, for False alarm rate 1e-2
 
     # Tests for demonstrating the calibration effect:
     # file_path = 'backup/metrics_1d_5DmrTc.json'      # 1D with 100 measurements for calibration
@@ -350,7 +350,7 @@ if __name__ == '__main__':
     # ===================================
     # ss_det.create_compare_results()
     # file_path = 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)
-    metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, file_path))
+    # metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, file_path))
 
 
 
