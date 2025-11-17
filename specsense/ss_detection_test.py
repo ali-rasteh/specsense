@@ -58,7 +58,7 @@ class Params_Class(object):
         self.sw_n_sigs_p_dist=None
         # self.sw_n_sigs_p_dist=[0.1,0.9]
         # self.sw_n_sigs_p_dist=[0.99,0.01]
-        self.calibrate_measurements=True        # This is for estimating the noise power from the data when assuming it is unknown
+        self.calibrate_measurements=False        # This is for estimating the noise power from the data when assuming it is unknown
         self.n_calibration=100                  # Number of measurements used for calibration
         self.known_interval=False
         self.ML_PFA=1e-6

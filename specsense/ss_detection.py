@@ -254,8 +254,8 @@ class SS_Detection(Signal_Utils):
                     ylabel=r'Threshold ($u_{\ell}$) (Log)'
 
                 # axs[idx].set_title(r'$P_{FA}$' + '={:0.2f}'.format(p_fa), fontsize=22, fontweight='bold')
-                axs[idx].set_xlabel(xlabel, fontsize=24)
-                axs[idx].set_ylabel(ylabel, fontsize=24)
+                axs[idx].set_xlabel(xlabel, fontsize=20)
+                axs[idx].set_ylabel(ylabel, fontsize=20)
                 # if mode==3 or mode==4:
                 #     # axs[idx].set_xlim([N_min, N_max])
                 #     axs[idx].set_ylim([1e-4, 1])
@@ -908,6 +908,14 @@ class SS_Detection(Signal_Utils):
     def plot(self, plot_dic, mode='snr'):
         if self.plot_level<0:
             return
+        plot_theoretical = True
+        title_fontsize = 22
+        legend_fontsize = 16
+        x_label_fontsize = 18
+        y_label_fontsize = 14
+        tick_fontsize = 16
+        line_width = 2
+        marker_size = 8
         p_theory_plots = []
 
         for i, metric in enumerate(list(plot_dic.keys())):
@@ -1085,14 +1093,14 @@ class SS_Detection(Signal_Utils):
                     y_max = max(y_max_, y_max)
 
                     if param_name=='SNR':
-                        axes[k].semilogy(x, y, color=color, linestyle=linestyle, marker=marker, label=method, linewidth=2, markersize=8)
-                        if p_theory is not None and not (i,k) in p_theory_plots:
-                            axes[k].semilogy(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=8)
+                        axes[k].semilogy(x, y, color=color, linestyle=linestyle, marker=marker, label=method, linewidth=line_width, markersize=marker_size)
+                        if plot_theoretical and p_theory is not None and not (i,k) in p_theory_plots:
+                            axes[k].semilogy(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=line_width, markersize=marker_size)
                             p_theory_plots.append((i,k))
                     elif param_name=='Interval Size':
-                        axes[k].loglog(x, y, color=color, linestyle=linestyle, marker=marker, label=method, linewidth=2, markersize=8)
-                        if p_theory is not None and not (i,k) in p_theory_plots:
-                            axes[k].loglog(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=8)
+                        axes[k].loglog(x, y, color=color, linestyle=linestyle, marker=marker, label=method, linewidth=line_width, markersize=marker_size)
+                        if plot_theoretical and p_theory is not None and not (i,k) in p_theory_plots:
+                            axes[k].loglog(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=line_width, markersize=marker_size)
                             p_theory_plots.append((i,k))
                     if all(y==0) and not metric in ['fa_rate']:
                         # axes[k].get_shared_y_axes().remove(axes[k])
@@ -1103,17 +1111,17 @@ class SS_Detection(Signal_Utils):
                         # axes[k].sharey(axes[0])
                         pass
 
-                    axes[k].set_title('{} = {}'.format(fixed_param_name, fixed_param_t_str), fontsize=22, fontweight='bold')
+                    axes[k].set_title('{} = {}'.format(fixed_param_name, fixed_param_t_str), fontsize=title_fontsize, fontweight='bold')
                     k += 1
 
 
             for k, ax in enumerate(axes):
-                axes[k].set_xlabel(x_label, fontsize=18)
+                axes[k].set_xlabel(x_label, fontsize=x_label_fontsize)
                 if k==0:
-                    axes[k].set_ylabel(y_label, fontsize=14)
-                axes[k].legend(fontsize=16)
-                axes[k].tick_params(axis='both', which='major', labelsize=16, width=1.7, length=7)
-                axes[k].tick_params(axis='both', which='minor', labelsize=16, width=1.1, length=3)
+                    axes[k].set_ylabel(y_label, fontsize=y_label_fontsize)
+                axes[k].legend(fontsize=legend_fontsize)
+                axes[k].tick_params(axis='both', which='major', labelsize=tick_fontsize, width=1.7, length=7)
+                axes[k].tick_params(axis='both', which='minor', labelsize=tick_fontsize, width=1.1, length=3)
                 axes[k].grid(True, linestyle=':')
                 # axes[k].set_xlim([min(x), max(x)])
                 axes[k].set_ylim([0.7*y_min, 1.5*y_max])
