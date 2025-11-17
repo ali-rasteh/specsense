@@ -10,6 +10,7 @@ import_torch=True
 
 class Params_Class(object):
     def __init__(self):
+        # Important parameters to set
         self.ndim=1
         self.sweep_snr=['', '']     # nn and ml
         self.sweep_size=['', '']    # nn and ml
@@ -60,10 +61,11 @@ class Params_Class(object):
         self.calibrate_measurements=True        # This is for estimating the noise power from the data when assuming it is unknown
         self.n_calibration=100                  # Number of measurements used for calibration
         self.known_interval=False
-        self.ML_PFA=1e-6
+        self.ML_PFA=1e-2
         self.ML_thr_mode='theoretical'    # analysis or data or static or theoretical
 
 
+        # Neural network parameters
         if self.ndim==1:
             self.n_dataset=200000
         elif self.ndim==2:
@@ -75,6 +77,7 @@ class Params_Class(object):
         self.norm_mode_mask='none'        # max or std or max&std or none
         self.norm_mode_bbox='len'        # max or std or max&std or none or len
 
+        # Other training/testing parameters
         self.train=False
         self.test=False
         self.count_flop=False
@@ -100,7 +103,7 @@ class Params_Class(object):
         self.lambda_class=1.0
         self.contours_min_area=1
         self.contours_max_gap=20
-        self.verbose_level=5
+        self.verbose_level=4
         self.plot_level=5
 
         # Constant parameters
@@ -194,7 +197,8 @@ if __name__ == '__main__':
     # ss_det.plot_MD_vs_DoF(mode=1)
     # ss_det.plot_MD_vs_DoF(mode=2)
     # ss_det.plot_MD_vs_DoF(mode=3)
-    ss_det.plot_MD_vs_DoF(mode=4)
+    # ss_det.plot_MD_vs_DoF(mode=4)
+    ss_det.plot_threshold_vs_DoF(mode=2)
     ss_det.plot_signals()
     params.ML_thr = ss_det.find_ML_thr(thr_coeff=params.ML_thr_coeff)
 
@@ -311,10 +315,6 @@ if __name__ == '__main__':
         ss_det.save_dict_to_json(metrics, os.path.join(params.logs_dir, 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)))
 
 
-    # =================================== Other results:
-
-    # file_path = 'backup/metrics_1d_GVCz44.json'      # 1D with IoU on all signals
-    # file_path = 'backup/metrics_2d_rapHb5.json'      # 2D with IoU on all signals
 
     # =================================== Final results with IoU only on detected signals:
     # Original tests:
@@ -325,11 +325,11 @@ if __name__ == '__main__':
 
     # Tests for demonstrating False alarm rate:
     # file_path = 'backup/metrics_1d_sU7mrh.json'      # 1D, for False alarm rate 1e-3
-    # file_path = 'backup/metrics_1d_qlJgl4.json'      # 1D, for False alarm rate 1e-2
+    file_path = 'backup/metrics_1d_qlJgl4.json'      # 1D, for False alarm rate 1e-2
 
     # Tests for demonstrating the calibration effect:
-    # file_path = 'backup/metrics_1d_4kFKTf.json'      # 1D with 100 measurements for calibration
-    # file_path = 'backup/metrics_1d_4otF7I.json'      # 1D with 1000 measurements for calibration
+    # file_path = 'backup/metrics_1d_5DmrTc.json'      # 1D with 100 measurements for calibration
+    # file_path = 'backup/metrics_1d_Cxeesv.json'      # 1D with 1000 measurements for calibration
     # file_path = 'backup/metrics_2d_XlubOK.json'      # 2D with 100 measurements for calibration
     # file_path = 'backup/metrics_2d_pFH8MG.json'      # 2D with 1000 measurements for calibration
     # file_path = 'backup/metrics_1d_calib_compare.json'      # 1D comparing no calibration, 100 and 1000 measurements for calibration
@@ -338,11 +338,20 @@ if __name__ == '__main__':
     # file_path = 'backup/metrics_1d_pmwYdZ.json'      # 1D
     # file_path = 'backup/metrics_2d_izUEDC.json'      # 2D
     # file_path = 'backup/metrics_1d_known_interval_compare.json'      # 1D comparing unknown and known interval
-    file_path = 'backup/metrics_2d_known_interval_compare.json'      # 2D comparing unknown and known interval
+    # file_path = 'backup/metrics_2d_known_interval_compare.json'      # 2D comparing unknown and known interval
+
+    # =================================== Other results:
+    # file_path = 'backup/metrics_1d_GVCz44.json'      # 1D with IoU on all signals
+    # file_path = 'backup/metrics_2d_rapHb5.json'      # 2D with IoU on all signals
+    # file_path = 'backup/metrics_1d_4kFKTf.json'      # 1D with 100 measurements for calibration
+    # file_path = 'backup/metrics_1d_4otF7I.json'      # 1D with 1000 measurements for calibration
 
 
+    # ===================================
+    # ss_det.create_compare_results()
     # file_path = 'metrics_{}d_{}.json'.format(len(params.shape), params.random_str)
     metrics = ss_det.load_dict_from_json(os.path.join(params.logs_dir, file_path))
+
 
 
     if params.sweep_snr:

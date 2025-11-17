@@ -207,6 +207,70 @@ class SS_Detection(Signal_Utils):
         plt.show()
 
 
+    def plot_threshold_vs_DoF(self, N=1024, N_min=1, N_max=1024, n_points=1000, p_fas=None, mode=1):
+        
+        def phi(x):
+            return x-1-np.log(x)
+
+        n_plots = 1
+        ells = np.logspace(np.log10(N_min), np.log10(N_max), n_points).round().astype(int)
+        ells = np.unique(ells)
+        dofs = 2 * ells
+
+        if p_fas is None:
+            p_fas = [1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8]
+
+        if self.plot_level>=0:
+            fig, axs = plt.subplots(1, n_plots, figsize=(7, 6), sharey=True)
+            if n_plots==1:
+                axs = [axs]
+            idx = 0
+            for _, p_fa in enumerate(p_fas):
+                u_l = stats.chi2.ppf(1-p_fa*(2/(N**2)), dofs)/dofs
+                # t_l = ells * phi(u_l)
+                t_l = u_l
+
+                label = r'$P_{FA}$' + '={:.1e}'.format(p_fa)
+                if mode==1:
+                    axs[idx].plot(ells, t_l, label=label, linewidth=3)
+                elif mode==2:
+                    axs[idx].semilogx(ells, t_l, label=label, linewidth=3)
+                elif mode==3:
+                    axs[idx].semilogy(ells, t_l, label=label, linewidth=3)
+                elif mode==4:
+                    axs[idx].loglog(ells, t_l, label=label, linewidth=3)
+
+                if mode==1:
+                    xlabel=r'Interval Size ($\ell$)'
+                    ylabel=r'Threshold ($u_{\ell}$)'
+                elif mode==2:
+                    xlabel=r'Interval Size ($\ell$) (Logarithmic)'
+                    ylabel=r'Threshold ($u_{\ell}$)'
+                elif mode==3:
+                    xlabel=r'Interval Size ($\ell$)'
+                    ylabel=r'Threshold ($u_{\ell}$) (Log)'
+                elif mode==4:
+                    xlabel=r'Interval Size ($\ell$) (Logarithmic)'
+                    ylabel=r'Threshold ($u_{\ell}$) (Log)'
+
+                # axs[idx].set_title(r'$P_{FA}$' + '={:0.2f}'.format(p_fa), fontsize=22, fontweight='bold')
+                axs[idx].set_xlabel(xlabel, fontsize=24)
+                axs[idx].set_ylabel(ylabel, fontsize=24)
+                # if mode==3 or mode==4:
+                #     # axs[idx].set_xlim([N_min, N_max])
+                #     axs[idx].set_ylim([1e-4, 1])
+                axs[idx].grid(True)
+                axs[idx].legend(fontsize=18)
+                # axs[idx].legend(fontsize=14, loc='upper left', bbox_to_anchor=(1, 1))
+                axs[idx].tick_params(axis='both', which='major', labelsize=18, width=2.7, length=7)
+                axs[idx].tick_params(axis='both', which='minor', labelsize=18, width=1.5, length=4)
+
+            # fig.suptitle('Threshold Value vs Interval Size', fontsize=26, fontweight='bold')
+            fig.tight_layout()
+            plt.savefig(self.figs_dir + 'thr_vs_dof_{}.pdf'.format(mode), format='pdf')
+            plt.show()
+
+
 
     def likelihood(self, S):
         if S is None:
@@ -640,11 +704,12 @@ class SS_Detection(Signal_Utils):
         return LLRs
 
 
-    def estimate_noise_var(self, snr_range=np.array([10,10]), n_measurements=10):
-        self.print("Starting to estimate the noise variance...",thr=0)
+    def estimate_noise_var(self, snr_range=np.array([10,10]), n_measurements=100):
+        self.print("Starting to estimate the noise variance...",thr=5)
         
         psds = []
-        for _ in range(n_measurements):
+        n_rep = n_measurements // np.prod(self.shape) + 1
+        for _ in range(n_rep):
             n_sigs = 0
             (psd, mask) = self.generate_random_PSD(shape=self.shape, sig_regions=None, n_sigs=n_sigs, 
                                                    n_sigs_max=n_sigs, sig_size_min=None, sig_size_max=None, 
@@ -653,9 +718,10 @@ class SS_Detection(Signal_Utils):
                                                    mask_mode='binary')
             psds.append(psd)
         psds = np.array(psds)
-        noise_var_est = np.mean(psd)
+        psds = psds.flatten()[:n_measurements]
+        noise_var_est = np.mean(psds)
 
-        self.print("Estimated noise variance: {}".format(noise_var_est),thr=0)
+        self.print("Estimated noise variance: {}".format(noise_var_est),thr=5)
         return noise_var_est
 
 
@@ -746,17 +812,17 @@ class SS_Detection(Signal_Utils):
             metrics[metric]['ML'] = {}
             metrics[metric]['ML_binary_search'] = {}
         for snr in snrs:
-            if self.calibrate_measurements:
-                noise_power = self.estimate_noise_var(snr_range=np.array([snr, snr]), n_measurements=self.n_calibration)
-            else:
-                noise_power = self.noise_power
-
             sim_values_simple = []
             sim_values_binary = []
             for metric in metrics.keys():
                 metrics[metric]['ML'][snr] = 0.0
                 metrics[metric]['ML_binary_search'][snr] = 0.0
             for i in range(self.n_simulations):
+                if self.calibrate_measurements:
+                    noise_power = self.estimate_noise_var(snr_range=np.array([snr, snr]), n_measurements=self.n_calibration)
+                else:
+                    noise_power = self.noise_power
+
                 if (i+1) % (self.n_simulations//10)==0:
                     self.print('Simulation #: {}, Size: {}, SNR: {:0.3f}'.format(i+1, sig_size_min, snr),thr=0)
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
@@ -790,11 +856,6 @@ class SS_Detection(Signal_Utils):
     def sweep_sizes(self, sizes, n_sigs_min=1, n_sigs_max=1, n_sigs_p_dist=None, snr_range=np.array([10,10])):
         self.print("Starting to sweep ML detector on Signal sizes for n_sigs:{}={}, snr_range:{}...".format(n_sigs_min, n_sigs_max, snr_range))
 
-        if self.calibrate_measurements:
-            noise_power = self.estimate_noise_var(snr_range=snr_range, n_measurements=self.n_calibration)
-        else:
-            noise_power = self.noise_power
-
         n_sigs_list = np.arange(n_sigs_min, n_sigs_max+1)
         metrics = {"det_rate": {}, "missed_rate": {}, "fa_rate": {}}
         for metric in metrics.keys():
@@ -808,6 +869,11 @@ class SS_Detection(Signal_Utils):
                 metrics[metric]['ML'][size_str] = 0.0
                 metrics[metric]['ML_binary_search'][size_str] = 0.0
             for i in range(self.n_simulations):
+                if self.calibrate_measurements:
+                    noise_power = self.estimate_noise_var(snr_range=snr_range, n_measurements=self.n_calibration)
+                else:
+                    noise_power = self.noise_power
+
                 if (i+1) % (self.n_simulations//10)==0:
                     self.print('Simulation #: {}, SNR:{:0.3f}, Size: {}'.format(i+1, snr_range[0], size),thr=0)
                 n_sigs = choice(n_sigs_list, p=n_sigs_p_dist)
@@ -845,8 +911,8 @@ class SS_Detection(Signal_Utils):
         p_theory_plots = []
 
         for i, metric in enumerate(list(plot_dic.keys())):
-            if metric=='fa_rate':
-                continue
+            # if metric=='fa_rate':
+            #     continue
 
             fixed_param_len = len(list(plot_dic[metric][list(plot_dic[metric].keys())[0]].keys()))
             # fixed_param_len = 1
@@ -878,12 +944,20 @@ class SS_Detection(Signal_Utils):
                         file_name = 'ss_sw_snr'
                         fixed_param_name = 'Interval Size'
                         try:
-                            fixed_param_t = int(fixed_param_t)
+                            if len(self.shape)==1:
+                                fixed_param_t = int(fixed_param_t)
+                                fixed_param_t_str = f'{fixed_param_t}'
+                            elif len(self.shape)==2:
+                                fixed_param_t = int(fixed_param_t)
+                                fixed_param_t_str = f'{fixed_param_t}×{fixed_param_t}'
+                            else:
+                                raise ValueError("Invalid ndim!")
                         except:
                             fixed_param_t = int(fixed_param_t[0])
+                            fixed_param_t_str = f'{fixed_param_t}×{fixed_param_t}'
                         # if not fixed_param_t in [8.0]:
                         #     continue
-                        
+
                         snrs = np.array(x_linear)
                         sizes = [fixed_param_t]
                         x_label = 'SNR (dB)'
@@ -893,11 +967,11 @@ class SS_Detection(Signal_Utils):
                         param_name = 'Interval Size'
                         file_name = 'ss_sw_size'
                         fixed_param_name = 'SNR'
-                        # fixed_param_t = np.round(self.lin_to_db(fixed_param_t),1)
                         fixed_param_t = fixed_param_t
+                        fixed_param_t_str = f'{np.round(self.lin_to_db(fixed_param_t),1)} dB'
                         # if not fixed_param_t in [5.0]:
                         #     continue
-                        
+
                         snrs = [fixed_param_t]
                         sizes = np.array([float(item[0]) for item in x_linear])
                         x_label = 'Interval Size (Logarithmic)'
@@ -919,11 +993,11 @@ class SS_Detection(Signal_Utils):
                             postfix = plot_name.split('_')[-1]
                             method = method + ' (' + postfix + ')'
                             if postfix=='calib-100':
-                                continue
-                                color = 'cyan' if color=='red' else 'orange'
+                                # continue
+                                color = '#1ABC9C' if color=='red' else '#E67E22'
                                 marker = 'D'
                             elif postfix=='calib-1000':
-                                color = 'cyan' if color=='red' else 'orange'
+                                color = "#204568" if color=='red' else '#992D2D'
                                 marker = 'D'
                         if 'known-interval' in plot_name:
                             if 'binary' in plot_name:
@@ -1013,12 +1087,12 @@ class SS_Detection(Signal_Utils):
                     if param_name=='SNR':
                         axes[k].semilogy(x, y, color=color, linestyle=linestyle, marker=marker, label=method, linewidth=2, markersize=8)
                         if p_theory is not None and not (i,k) in p_theory_plots:
-                            # axes[k].semilogy(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=8)
+                            axes[k].semilogy(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=8)
                             p_theory_plots.append((i,k))
                     elif param_name=='Interval Size':
                         axes[k].loglog(x, y, color=color, linestyle=linestyle, marker=marker, label=method, linewidth=2, markersize=8)
                         if p_theory is not None and not (i,k) in p_theory_plots:
-                            # axes[k].loglog(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=8)
+                            axes[k].loglog(x, p_theory, linestyle='--', color='black', label='Theoretical Bound', linewidth=2, markersize=8)
                             p_theory_plots.append((i,k))
                     if all(y==0) and not metric in ['fa_rate']:
                         # axes[k].get_shared_y_axes().remove(axes[k])
@@ -1029,7 +1103,7 @@ class SS_Detection(Signal_Utils):
                         # axes[k].sharey(axes[0])
                         pass
 
-                    axes[k].set_title('{} = {}'.format(fixed_param_name, fixed_param_t), fontsize=22, fontweight='bold')
+                    axes[k].set_title('{} = {}'.format(fixed_param_name, fixed_param_t_str), fontsize=22, fontweight='bold')
                     k += 1
 
 
@@ -1037,7 +1111,7 @@ class SS_Detection(Signal_Utils):
                 axes[k].set_xlabel(x_label, fontsize=18)
                 if k==0:
                     axes[k].set_ylabel(y_label, fontsize=14)
-                axes[k].legend(fontsize=12)
+                axes[k].legend(fontsize=16)
                 axes[k].tick_params(axis='both', which='major', labelsize=16, width=1.7, length=7)
                 axes[k].tick_params(axis='both', which='minor', labelsize=16, width=1.1, length=3)
                 axes[k].grid(True, linestyle=':')
@@ -1045,11 +1119,42 @@ class SS_Detection(Signal_Utils):
                 axes[k].set_ylim([0.7*y_min, 1.5*y_max])
 
             # fig.suptitle('{} vs {} for different {}s'.format(metric_name, param_name, fixed_param_name), fontsize=20)
-            # fig.tight_layout(rect=[0, 0, 1, 0.95])
             fig.tight_layout()
             plt.savefig(self.figs_dir + '{}_{}.pdf'.format(file_name, metric), format='pdf')
             # plt.savefig(self.figs_dir + '{}_{}.png'.format(file_name, metric), format='png', dpi=300)
             plt.show()
+
+
+    def create_compare_results(self):
+        result_original = self.load_dict_from_json(os.path.join(self.logs_dir, 'backup/metrics_1d_3P0URX_alt.json'))
+        results_path = [
+            os.path.join(self.logs_dir, 'backup/metrics_1d_3P0URX_alt.json'),
+            os.path.join(self.logs_dir, 'metrics_1d_5DmrTc.json'),
+            os.path.join(self.logs_dir, 'metrics_1d_Cxeesv.json')
+        ]
+        results_postfix = [
+            '',
+            '_calib-100',
+            '_calib-1000'
+            # result_2_postfix = '_known-interval'
+        ]
+        results_ignore = ['NN']
+
+        compare_results_path = os.path.join(self.logs_dir, 'backup/metrics_1d_calib_compare.json')
+        # compare_results_path = os.path.join(self.logs_dir, 'backup/metrics_1d_known_interval_compare.json')
+
+        results = [self.load_dict_from_json(path) for path in results_path]
+        metrics = result_original.keys()
+        methods = result_original[list(metrics)[0]].keys()
+        compare_results = {}
+        for metric in metrics:
+            compare_results[metric] = {}
+            for method in methods:
+                if any(ignored in method for ignored in results_ignore):
+                    continue
+                for i, result in enumerate(results):
+                    compare_results[metric][method+results_postfix[i]] = result[metric][method]
+        self.save_dict_to_json(compare_results, compare_results_path)
 
 
     def plot_flops_comparison(self):
