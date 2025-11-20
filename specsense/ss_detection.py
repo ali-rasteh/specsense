@@ -1178,17 +1178,22 @@ class SS_Detection(Signal_Utils):
         binary_search = [3.75e3, 2.95e4]
 
         # Create bars
-        bars1 = ax.bar(x - width, exhaustive, width, label='Exhaustive ML', color='#FF6F00')
-        bars2 = ax.bar(x, unet, width, label='U-Net', color='#1E90FF')
-        bars3 = ax.bar(x + width, binary_search, width, label='Binary Search', color='#57068C')
+        # bars1 = ax.bar(x - width, exhaustive, width, label='Exhaustive ML', color='#FF6F00')
+        # bars2 = ax.bar(x, unet, width, label='U-Net', color='#1E90FF')
+        # bars3 = ax.bar(x + width, binary_search, width, label='Binary Search', color='#57068C')
+        bars1 = ax.bar(x - width, exhaustive, width, label='Exhaustive ML', color='red')
+        bars2 = ax.bar(x, unet, width, label='U-Net', color='green')
+        bars3 = ax.bar(x + width, binary_search, width, label='Binary Search', color='blue')
+
 
         # Log scale for FLOPs
-        ax.set_title('Comparison of Computational Cost (FLOPs)', fontsize=20, weight='bold')
-        ax.set_ylabel('N FLOPs (log)', fontsize=16)
+        # ax.set_title('Comparison of Computational Cost (FLOPs)', fontsize=20, weight='bold')
+        ax.set_ylabel('N FLOPs (log)', fontsize=17)
         ax.set_xticks(x)
-        ax.set_xticklabels(['1D–1024', '2D–128×128'], fontsize=16, fontweight="bold")
+        ax.set_xticklabels(['1D–1024', '2D–128×128'], fontsize=17, fontweight="bold")
         # set y-axis tick label size
-        ax.tick_params(axis='y', labelsize=14)
+        ax.tick_params(axis='y', which='major', labelsize=16, width=2.0, length=7)
+        ax.tick_params(axis='y', which='minor', labelsize=14, width=1.3, length=4)
         ax.legend(fontsize=14)
         ax.set_yscale('log')
         ax.set_ylim(top=3e9)
@@ -1201,7 +1206,8 @@ class SS_Detection(Signal_Utils):
                         ha='center', va='bottom', fontsize=13)
 
         plt.tight_layout()
-        plt.savefig(self.figs_dir + 'ss_flops_comparison.png', format='png', dpi=300)
+        # plt.savefig(self.figs_dir + 'ss_flops_comparison.png', format='png', dpi=300)
+        plt.savefig(self.figs_dir + 'ss_flops_comparison.pdf', format='pdf')
         plt.show()
 
 
